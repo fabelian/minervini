@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KOSPI Momentum / Breakout Monitor</title>
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+<style>
+  :root {
+    --bg: #0d1117; --bg2: #161b22; --border: #30363d; --text: #c9d1d9;
+    --muted: #8b949e; --accent: #58a6ff; --green: #3fb950; --red: #f85149;
+    --orange: #f78166; --purple: #bc8cff; --teal: #56d4dd;
+  }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Malgun Gothic", sans-serif;
+         margin: 0; background: var(--bg); color: var(--text); }
+  header { background: var(--bg2); padding: 16px 24px; border-bottom: 1px solid var(--border); }
+  h1 { margin: 0; font-size: 20px; color: var(--accent); }
+  .subtitle { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  main { max-width: 1400px; margin: 0 auto; padding: 24px; }
+  .controls { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 24px; }
+  .controls input, .controls button {
+    padding: 8px 14px; border-radius: 6px; border: 1px solid var(--border);
+    background: var(--bg); color: var(--text); font-size: 14px;
+  }
+  .controls button { cursor: pointer; background: #238636; border-color: #2ea043; color: white; font-weight: 600; }
+  .controls button:disabled { background: var(--border); border-color: var(--border); cursor: not-allowed; }
+  .controls .status { font-size: 12px; color: var(--muted); }
+  .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 24px; }
+  .kpi { background: var(--bg2); padding: 14px 16px; border-radius: 8px; border: 1px solid var(--border); }
+  .kpi-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; }
+  .kpi-value { font-size: 22px; font-weight: 700; margin-top: 4px; color: #f0f6fc; }
+  .kpi-value.green { color: var(--green); }
+  .kpi-value.red { color: var(--red); }
+  .charts { display: grid; grid-template-columns: 1fr; gap: 16px; }
+  @media (min-width: 980px) { .charts { grid-template-columns: 1fr 1fr; } .charts > .full { grid-column: span 2; } }
+  .card { background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; padding: 12px 16px 16px; }
+  .card-title { font-size: 14px; font-weight: 600; margin-bottom: 8px; }
+  .chart { height: 280px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { padding: 6px 10px; border-bottom: 1px solid #21262d; text-align: right; }
+  th:nth-child(-n+2), td:nth-child(-n+2) { text-align: left; }
+  th { color: var(--muted); font-weight: 500; text-transform: uppercase; font-size: 11px; }
+  tr:hover { background: #1a2230; }
+  .green { color: var(--green); }
+  .red { color: var(--red); }
+  details { margin-top: 16px; }
+  summary { cursor: pointer; color: var(--accent); font-size: 13px; padding: 6px 0; }
+  .png-img { width: 100%; max-width: 900px; margin-top: 12px; border-radius: 8px; border: 1px solid var(--border); }
+  .footer { padding: 24px; text-align: center; font-size: 12px; color: var(--muted); }
+  .empty { color: var(--muted); padding: 12px 0; }
+  .spinner { display: inline-block; width: 12px; height: 12px; border: 2px solid var(--muted);
+             border-top-color: var(--accent); border-radius: 50%; animation: spin 1s linear infinite; vertical-align: -2px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<header>
+  <h1>KOSPI Momentum / Breakout Leading Indicator Monitor</h1>
+  <div class="subtitle">Minervini-style 트렌드 템플릿 + IBD RS + 경로 의존적 hit rate</div>
+</header>
+<main>
+  <div class="controls">
+    <label>대상 종목 수
+      <input type="number" id="maxStocks" value="50" min="5" max="1000" style="width:80px;margin-left:6px;">
+    </label>
+    <button id="runBtn">실행</button>
+    <span class="status" id="status">준비됨</span>
+  </div>
+
+  <div id="kpiArea"></div>
+
+  <div class="charts" id="chartsArea"></div>
+
+  <details open>
+    <summary>오늘의 Quality 브레이크아웃 종목 (RS≥70)</summary>
+    <div id="picksArea"></div>
+  </details>
+
+  <details>
+    <summary>서버 사이드 Matplotlib 대시보드 PNG</summary>
+    <div id="pngArea"></div>
+  </details>
+</main>
+<div class="footer">github.com/fabelian/minervini · KOSPI 한정</div>
+
+<script>
+const LAYOUT = {
+  paper_bgcolor: '#161b22',
+  plot_bgcolor: '#161b22',
+  font: { color: '#c9d1d9', size: 11 },
+  xaxis: { gridcolor: '#21262d', linecolor: '#30363d' },
+  yaxis: { gridcolor: '#21262d', linecolor: '#30363d' },
+  margin: { l: 50, r: 30, t: 10, b: 40 },
+  legend: { x: 0, y: 1.12, orientation: 'h', font: { size: 10 } },
+};
+const PCFG = { displayModeBar: false, responsive: true };
+
+const fmtPct = v => v == null || isNaN(v) ? '—' : (v * 100).toFixed(1) + '%';
+const fmtInt = v => v == null || isNaN(v) ? '—' : Math.round(v).toLocaleString();
+const fmtNum = (v, d = 2) => v == null || isNaN(v) ? '—' : Number(v).toFixed(d);
+const colorPct = (v, hi = 0.55, lo = 0.4) => v == null ? '' : (v >= hi ? 'green' : (v <= lo ? 'red' : ''));
+
+function renderKPIs(s) {
+  const l = s.latest || {};
+  const items = [
+    { label: 'As-of', value: s.as_of || '—' },
+    { label: '집계 종목', value: fmtInt(s.n_stocks) },
+    { label: '% > SMA200', value: fmtPct(l.pct_above_sma200), cls: colorPct(l.pct_above_sma200, 0.5, 0.4) },
+    { label: '% > SMA50', value: fmtPct(l.pct_above_sma50) },
+    { label: '% Trend Template', value: fmtPct(l.pct_passing_template), cls: colorPct(l.pct_passing_template, 0.3, 0.15) },
+    { label: '52주 신고가', value: fmtInt(l.new_highs), cls: l.new_highs > 0 ? 'green' : '' },
+    { label: '52주 신저가', value: fmtInt(l.new_lows), cls: l.new_lows > 0 ? 'red' : '' },
+    { label: 'Quality 브레이크아웃', value: fmtInt(l.quality_breakouts) },
+    { label: '20d 브레이크아웃 hit rate', value: fmtPct(l.bo_hit_rate), cls: colorPct(l.bo_hit_rate) },
+    { label: '모멘텀 데실 hit rate', value: fmtPct(l.factor_hit_rate), cls: colorPct(l.factor_hit_rate) },
+    { label: '평균 RS rank', value: fmtNum(l.avg_rs_rank, 1) },
+  ];
+  document.getElementById('kpiArea').innerHTML = '<div class="kpi-grid">' +
+    items.map(it => `<div class="kpi"><div class="kpi-label">${it.label}</div><div class="kpi-value ${it.cls || ''}">${it.value}</div></div>`).join('') +
+    '</div>';
+}
+
+function trace(name, data, color, opts = {}) {
+  const x = (data || []).map(p => p.date);
+  const y = (data || []).map(p => opts.scale ? p.value * opts.scale : p.value);
+  const t = { x, y, name };
+  if (opts.type === 'bar') {
+    t.type = 'bar';
+    t.marker = { color };
+  } else {
+    t.type = 'scatter';
+    t.mode = 'lines';
+    t.line = { color, width: 1.6 };
+  }
+  return t;
+}
+
+function chartCard(id, title, full = false) {
+  const wrap = document.createElement('div');
+  wrap.className = 'card' + (full ? ' full' : '');
+  wrap.innerHTML = `<div class="card-title">${title}</div><div id="${id}" class="chart"></div>`;
+  return wrap;
+}
+
+function renderCharts(series) {
+  const area = document.getElementById('chartsArea');
+  area.innerHTML = '';
+
+  const c1 = chartCard('c-kospi', 'KOSPI 종합지수', true);
+  area.appendChild(c1);
+  Plotly.newPlot('c-kospi', [trace('KOSPI', series.kospi, '#c9d1d9')],
+    Object.assign({}, LAYOUT), PCFG);
+
+  const c2 = chartCard('c-breadth', '시장 폭 (Breadth) %');
+  area.appendChild(c2);
+  Plotly.newPlot('c-breadth', [
+    trace('% > SMA200', series.pct_above_sma200, '#58a6ff', { scale: 100 }),
+    trace('% > SMA50', series.pct_above_sma50, '#79c0ff', { scale: 100 }),
+    trace('% Trend Template', series.pct_passing_template, '#3fb950', { scale: 100 }),
+  ], Object.assign({}, LAYOUT, { yaxis: Object.assign({}, LAYOUT.yaxis, { ticksuffix: '%' }) }), PCFG);
+
+  const c3 = chartCard('c-nh', '신고가 / 신저가');
+  area.appendChild(c3);
+  const nlData = (series.new_lows || []).map(p => ({ date: p.date, value: -p.value }));
+  Plotly.newPlot('c-nh', [
+    trace('52주 신고가', series.new_highs, '#3fb950', { type: 'bar' }),
+    trace('52주 신저가', nlData, '#f85149', { type: 'bar' }),
+  ], Object.assign({}, LAYOUT, { barmode: 'relative' }), PCFG);
+
+  const c4 = chartCard('c-bo', '브레이크아웃 카운트');
+  area.appendChild(c4);
+  Plotly.newPlot('c-bo', [
+    trace('Pivot', series.pivot_breakouts, '#79c0ff'),
+    trace('Quality', series.quality_breakouts, '#f78166'),
+  ], Object.assign({}, LAYOUT), PCFG);
+
+  const c5 = chartCard('c-hit', '롤링 Hit Rate (Leading Indicator) %', true);
+  area.appendChild(c5);
+  Plotly.newPlot('c-hit', [
+    trace('20d 브레이크아웃 hit rate', series.bo_hit_rate, '#bc8cff', { scale: 100 }),
+    trace('모멘텀 데실 +ret hit rate', series.factor_hit_rate_pos, '#56d4dd', { scale: 100 }),
+    trace('모멘텀 데실 +5% hit rate', series.factor_hit_rate_5pct, '#f78166', { scale: 100 }),
+  ], Object.assign({}, LAYOUT, { yaxis: Object.assign({}, LAYOUT.yaxis, { ticksuffix: '%' }) }), PCFG);
+}
+
+function renderPicks(picks) {
+  const el = document.getElementById('picksArea');
+  if (!picks || picks.length === 0) {
+    el.innerHTML = '<p class="empty">오늘 시그널 없음.</p>';
+    return;
+  }
+  const cols = [
+    { k: 'code', t: 'Code' }, { k: 'name', t: 'Name' },
+    { k: 'close', t: 'Close', fmt: v => v.toLocaleString() },
+    { k: 'rs_rank', t: 'RS Rank', fmt: v => v.toFixed(1) },
+    { k: 'ret_3m', t: '3M Ret', fmt: v => (v * 100).toFixed(1) + '%', signed: true },
+    { k: 'ret_6m', t: '6M Ret', fmt: v => (v * 100).toFixed(1) + '%', signed: true },
+    { k: 'pct_from_high', t: '52W high까지', fmt: v => (v * 100).toFixed(1) + '%', signed: true },
+    { k: 'vol_ratio', t: 'Vol×', fmt: v => v.toFixed(2) + 'x' },
+  ];
+  let html = '<table><thead><tr>' + cols.map(c => `<th>${c.t}</th>`).join('') + '</tr></thead><tbody>';
+  for (const p of picks) {
+    html += '<tr>';
+    for (const c of cols) {
+      const v = p[c.k];
+      if (v == null || (typeof v === 'number' && isNaN(v))) { html += '<td>—</td>'; continue; }
+      const cls = c.signed ? (v > 0 ? 'green' : (v < 0 ? 'red' : '')) : '';
+      const text = c.fmt ? c.fmt(v) : v;
+      html += `<td class="${cls}">${text}</td>`;
+    }
+    html += '</tr>';
+  }
+  html += '</tbody></table>';
+  el.innerHTML = html;
+}
+
+function renderPNG() {
+  document.getElementById('pngArea').innerHTML =
+    `<img class="png-img" src="/api/dashboard.png?t=${Date.now()}" onerror="this.replaceWith(Object.assign(document.createElement('p'),{className:'empty',textContent:'PNG 미생성'}))">`;
+}
+
+function renderResult(summary) {
+  renderKPIs(summary);
+  renderCharts(summary.series || {});
+  renderPicks(summary.picks || []);
+  renderPNG();
+}
+
+let pollTimer = null;
+async function poll(jobId, runBtn, statusEl) {
+  try {
+    const r = await fetch(`/api/status/${jobId}`);
+    const j = await r.json();
+    statusEl.innerHTML = `<span class="spinner"></span> 상태: ${j.status}` +
+      (j.started_at ? ` · 시작 ${j.started_at}` : '');
+    if (j.status === 'completed') {
+      clearInterval(pollTimer); pollTimer = null;
+      const rr = await fetch(`/api/result/${jobId}`);
+      const summary = await rr.json();
+      renderResult(summary);
+      statusEl.textContent = `완료 · job ${jobId} · ${summary.as_of || ''}`;
+      runBtn.disabled = false;
+    } else if (j.status === 'failed') {
+      clearInterval(pollTimer); pollTimer = null;
+      statusEl.textContent = `실패: ${j.error || 'unknown'}`;
+      runBtn.disabled = false;
+    }
+  } catch (e) {
+    statusEl.textContent = '폴링 오류: ' + e.message;
+  }
+}
+
+document.getElementById('runBtn').addEventListener('click', async () => {
+  const max_stocks = parseInt(document.getElementById('maxStocks').value) || null;
+  const btn = document.getElementById('runBtn');
+  const status = document.getElementById('status');
+  btn.disabled = true;
+  status.innerHTML = '<span class="spinner"></span> 제출 중…';
+  try {
+    const r = await fetch('/api/run', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ max_stocks }),
+    });
+    const j = await r.json();
+    status.innerHTML = `<span class="spinner"></span> 대기 (job ${j.job_id})`;
+    if (pollTimer) clearInterval(pollTimer);
+    pollTimer = setInterval(() => poll(j.job_id, btn, status), 2000);
+  } catch (e) {
+    status.textContent = '오류: ' + e.message;
+    btn.disabled = false;
+  }
+});
+
+// 초기 로드: 가장 최근 결과 가져오기
+(async () => {
+  try {
+    const r = await fetch('/api/latest');
+    if (r.ok) {
+      const j = await r.json();
+      if (j.summary) {
+        renderResult(j.summary);
+        document.getElementById('status').textContent =
+          `이전 결과 · job ${j.job_id} · ${j.summary.as_of || ''}`;
+      }
+    }
+  } catch (e) { /* ignore */ }
+})();
+</script>
+</body>
+</html>

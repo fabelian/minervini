@@ -1,6 +1,9 @@
 pandas>=2.0
 numpy>=1.24
-FinanceDataReader>=0.9.50
+finance-datareader>=0.9.50
 pykrx>=1.0.0
 tqdm>=4.65
 matplotlib>=3.7
+fastapi>=0.110
+uvicorn[standard]>=0.27
+pydantic>=2.0

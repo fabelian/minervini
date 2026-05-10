@@ -19,12 +19,39 @@ Simple Minervini-type KOSPI leadership health monitor.
 
 ## 빠른 시작
 
+### CLI
+
 ```bash
 pip install -r requirements.txt
 python main.py                     # 전체 KOSPI (~10-15분, 캐시 후 ~1분)
 python main.py --max-stocks 50     # 빠른 시험
 python main.py --out-dir ./report  # 출력 위치 지정
 ```
+
+### 웹 UI (FastAPI + 단일 HTML)
+
+```bash
+python -m uvicorn app:app --host 127.0.0.1 --port 8000
+# 브라우저에서 http://127.0.0.1:8000 접속
+```
+
+웹 UI 동작:
+1. 종목 수를 지정하고 **실행** 버튼 → 백그라운드 잡 시작 (2초 폴링)
+2. KPI 카드 + Plotly 인터랙티브 차트 5종 (KOSPI / Breadth / 신고가-신저가 / 브레이크아웃 카운트 / 롤링 hit rate)
+3. 오늘의 Quality 브레이크아웃 종목 테이블
+4. 서버 사이드 Matplotlib 대시보드 PNG 임베드
+
+API 엔드포인트:
+
+| Method | Path | 설명 |
+|---|---|---|
+| `GET` | `/` | 단일 HTML 프론트엔드 |
+| `POST` | `/api/run` | 파이프라인 실행 (`{"max_stocks": N}`), `{"job_id": ...}` 반환 |
+| `GET` | `/api/status/{job_id}` | 잡 상태 (queued / running / completed / failed) |
+| `GET` | `/api/result/{job_id}` | 완료된 잡의 요약 + 시계열 + picks |
+| `GET` | `/api/latest` | 가장 최근 완료된 잡 결과 |
+| `GET` | `/api/dashboard.png` | Matplotlib 대시보드 PNG |
+| `GET` | `/docs` | Swagger UI |
 
 출력:
 - `output_kospi/dashboard.png` — 5단 시각화
@@ -46,6 +73,8 @@ python main.py --out-dir ./report  # 출력 위치 지정
 | `monitor.py` | 오케스트레이션 + leading indicator 패널 빌드 |
 | `plot.py` | 5단 대시보드 PNG |
 | `main.py` | CLI 진입점 |
+| `app.py` | FastAPI 백엔드 (백그라운드 잡 + JSON API + 정적 HTML) |
+| `static/index.html` | 단일 파일 프론트엔드 (Plotly via CDN, 빌드 불필요) |
 | `test_smoke.py` | 네트워크 없이 합성 데이터로 핵심 로직 검증 |
 
 ## 환경
