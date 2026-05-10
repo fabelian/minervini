@@ -17,7 +17,7 @@ import pandas as pd
 from tqdm import tqdm
 
 from config import Config
-from data import get_kospi_listing, get_ohlcv_batch, get_kospi_index
+from data import get_kospi_listing, get_ohlcv_batch, get_kospi_index, get_sector_map
 from factors import add_smas, momentum_returns, relative_strength, trend_template, cross_sectional_rank
 from breakout import detect_breakouts
 from hit_rate import (
@@ -26,6 +26,10 @@ from hit_rate import (
     collect_signal_results,
     rolling_signal_hit_rate,
     factor_decile_hit_rate,
+    rolling_signal_hit_rate_by_sector,
+    factor_decile_hit_rate_by_sector,
+    sector_rotation_score,
+    sector_latest_ranking,
 )
 
 
@@ -130,8 +134,10 @@ def run(cfg: Config | None = None, max_stocks: int | None = None) -> dict[str, A
     end = datetime.now().strftime("%Y-%m-%d")
     start = (datetime.now() - timedelta(days=int(cfg.lookback_days * 1.6))).strftime("%Y-%m-%d")
 
-    print(f"[1/6] KOSPI 종목 리스트 로딩 ({end})")
+    print(f"[1/6] KOSPI 종목 리스트 + 섹터 매핑 로딩 ({end})")
     listing = get_kospi_listing(cfg.cache_dir)
+    sector_map = get_sector_map(cfg.cache_dir)
+    print(f"      섹터 매핑: {len(sector_map)}종목 → {len(set(sector_map.values()))}섹터")
     codes = listing["Code"].astype(str).str.zfill(6).tolist()
     if max_stocks:
         codes = codes[:max_stocks]
@@ -171,12 +177,24 @@ def run(cfg: Config | None = None, max_stocks: int | None = None) -> dict[str, A
         horizon=cfg.hit_horizon,
     )
 
+    print("       Sector rotation 시그널 (BSR/MFHR by sector)")
+    bsr_by_sector = rolling_signal_hit_rate_by_sector(
+        bo_signals, sector_map, cfg.rolling_window, min_obs=10,
+    )
+    mfhr_by_sector = factor_decile_hit_rate_by_sector(
+        prepared, sector_map, score_col="rs_rank",
+        top_pct=cfg.factor_top_pct, horizon=cfg.hit_horizon, min_obs=10,
+    )
+    rotation = sector_rotation_score(bsr_by_sector, mfhr_by_sector)
+    sector_ranking = sector_latest_ranking(bsr_by_sector, mfhr_by_sector)
+
     picks = todays_picks(prepared, cfg, listing)
     kospi_idx = get_kospi_index(start, end, cfg.cache_dir)
 
     return {
         "config": cfg,
         "listing": listing,
+        "sector_map": sector_map,
         "kospi_index": kospi_idx,
         "prepared": prepared,
         "leading": leading,
@@ -185,5 +203,9 @@ def run(cfg: Config | None = None, max_stocks: int | None = None) -> dict[str, A
         "pivot_signals": pivot_signals,
         "pivot_rolling": pivot_rolling,
         "factor_hit_rate": factor_hits,
+        "bsr_by_sector": bsr_by_sector,
+        "mfhr_by_sector": mfhr_by_sector,
+        "rotation_score": rotation,
+        "sector_ranking": sector_ranking,
         "today_picks": picks,
     }

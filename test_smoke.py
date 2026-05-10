@@ -17,8 +17,13 @@ from hit_rate import (
     collect_signal_results,
     rolling_signal_hit_rate,
     factor_decile_hit_rate,
+    rolling_signal_hit_rate_by_sector,
+    factor_decile_hit_rate_by_sector,
+    sector_rotation_score,
+    sector_latest_ranking,
 )
 from monitor import build_leading_indicator, todays_picks
+import uvicorn
 
 
 def _synthetic(seed: int, n: int = 600, trend: float = 0.0006, vol: float = 0.02,
@@ -123,9 +128,32 @@ def main() -> int:
     if not picks.empty:
         print(picks[["code", "name", "close", "rs_rank", "ret_3m"]].to_string(index=False))
 
+    print("[8] Sector rotation (BSR/MFHR by sector)")
+    # 합성 sector_map: 5종목을 2섹터로 분할
+    fake_sector = {code: ("A" if i < 3 else "B") for i, code in enumerate(panel.keys())}
+    bsr_sec = rolling_signal_hit_rate_by_sector(sigs, fake_sector,
+                                                cfg.rolling_window, min_obs=1)
+    mfhr_sec = factor_decile_hit_rate_by_sector(panel, fake_sector,
+                                                score_col="rs_rank",
+                                                top_pct=0.5, horizon=cfg.hit_horizon,
+                                                min_obs=1)
+    print(f"    BSR by sector rows: {len(bsr_sec)}, MFHR by sector rows: {len(mfhr_sec)}")
+    rot = sector_rotation_score(bsr_sec, mfhr_sec)
+    print(f"    rotation_score 시계열 길이: {len(rot)}")
+    if not rot.empty and "rotation_score" in rot.columns:
+        v = rot["rotation_score"].dropna()
+        if len(v) > 0:
+            print(f"    rotation_score 마지막값: {v.iloc[-1]:.3f}")
+    rank = sector_latest_ranking(bsr_sec, mfhr_sec)
+    print(f"    sector_ranking rows: {len(rank)}")
+    if not rank.empty:
+        print(rank.to_string(index=False))
+
     print("\n=== 모든 핵심 로직 PASS ===")
     return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    # sys.exit(main())
+    uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=False)
+

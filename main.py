@@ -52,6 +52,24 @@ def _print_summary(res: dict) -> None:
         print(f"    >5% hit rate:              {last['hit_rate_5pct']:.1%}")
         print(f"    평균 forward ret:          {last['avg_ret']:+.2%}")
 
+    rotation = res.get("rotation_score", pd.DataFrame())
+    ranking = res.get("sector_ranking", pd.DataFrame())
+    if not rotation.empty and "rotation_score" in rotation.columns:
+        valid = rotation.dropna(subset=["rotation_score"])
+        if not valid.empty:
+            last = valid.iloc[-1]
+            print("\n  [Sector rotation]")
+            bs = last.get("bsr_spread", float("nan"))
+            ms = last.get("mfhr_spread", float("nan"))
+            print(f"    rotation_score (오늘):     {last['rotation_score']:.3f}"
+                  f"  (BSR spread {bs:.3f} / MFHR spread {ms:.3f})")
+    if not ranking.empty:
+        print("    상위 5 섹터 (composite rank):")
+        cols = [c for c in ["sector", "bsr", "mfhr", "composite_rank"] if c in ranking.columns]
+        print(ranking[cols].head(5).to_string(index=False))
+        print("    하위 3 섹터:")
+        print(ranking[cols].tail(3).to_string(index=False))
+
     if not picks.empty:
         print(f"\n  [오늘의 Quality 브레이크아웃 종목 (RS≥{Config().pick_min_rs_rank:.0f}): "
               f"{len(picks)}개, 상위 10개]")
@@ -90,6 +108,14 @@ def main() -> None:
         res["pivot_rolling"].to_csv(out / "pivot_rolling_hit_rate.csv")
     if not res["factor_hit_rate"].empty:
         res["factor_hit_rate"].to_csv(out / "factor_decile_hit_rate.csv")
+    if not res.get("bsr_by_sector", pd.DataFrame()).empty:
+        res["bsr_by_sector"].to_csv(out / "sector_breakout_hit_rate.csv", index=False)
+    if not res.get("mfhr_by_sector", pd.DataFrame()).empty:
+        res["mfhr_by_sector"].to_csv(out / "sector_factor_hit_rate.csv", index=False)
+    if not res.get("rotation_score", pd.DataFrame()).empty:
+        res["rotation_score"].to_csv(out / "rotation_score.csv")
+    if not res.get("sector_ranking", pd.DataFrame()).empty:
+        res["sector_ranking"].to_csv(out / "sector_ranking.csv", index=False)
     if not res["today_picks"].empty:
         res["today_picks"].to_csv(out / "today_picks.csv", index=False)
 

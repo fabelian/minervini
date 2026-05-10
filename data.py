@@ -131,6 +131,93 @@ def get_ohlcv_batch(codes: list[str], start: str, end: str, cache_dir: str = ".c
     return out
 
 
+# ---------- 섹터 매핑 ----------
+
+def _fdr_sector_map() -> dict[str, str]:
+    if not _HAS_FDR:
+        return {}
+    try:
+        df = fdr.StockListing("KOSPI")
+    except Exception:
+        return {}
+    code_col = None
+    for cand in ("Code", "Symbol", "code", "ticker"):
+        if cand in df.columns:
+            code_col = cand
+            break
+    sec_col = None
+    for cand in ("Sector", "sector", "Industry", "업종"):
+        if cand in df.columns:
+            sec_col = cand
+            break
+    if not code_col or not sec_col:
+        return {}
+    out: dict[str, str] = {}
+    for c, s in zip(df[code_col].astype(str).str.zfill(6), df[sec_col]):
+        if pd.notna(s):
+            sv = str(s).strip()
+            if sv and sv.lower() != "nan":
+                out[c] = sv
+    return out
+
+
+def _krx_sector_map() -> dict[str, str]:
+    """KRX KOSPI 산업별 지수(1010~1090 등) 멤버를 통해 섹터 부여."""
+    if not _HAS_KRX:
+        return {}
+    out: dict[str, str] = {}
+    try:
+        idx_codes = krx.get_index_ticker_list(market="KOSPI")
+    except Exception:
+        return {}
+    for idx_code in idx_codes or []:
+        if not (isinstance(idx_code, str) and idx_code.startswith("1") and len(idx_code) == 4):
+            continue
+        if idx_code == "1001":  # 종합지수
+            continue
+        try:
+            name = krx.get_index_ticker_name(idx_code)
+        except Exception:
+            continue
+        if not name:
+            continue
+        # 산업분류가 아닌 사이즈/스타일/파생 지수 제외
+        if any(k in name for k in ("KOSPI 200", "코스피200", "선물", "변동성",
+                                   "TOP", "대형", "중형", "소형", "고배당", "배당성장")):
+            continue
+        try:
+            members = krx.get_index_portfolio_deposit_file(idx_code)
+        except Exception:
+            continue
+        for code in members or []:
+            out.setdefault(str(code).zfill(6), name)
+    return out
+
+
+def get_sector_map(cache_dir: str = ".cache_kospi", refresh: bool = False) -> dict[str, str]:
+    """code → sector 라벨. FDR Sector 컬럼을 우선 사용하고 누락분만 pykrx로 보강."""
+    cp = _cache_path("sector_map", cache_dir)
+    if cp.exists() and not refresh:
+        try:
+            with cp.open("rb") as f:
+                cached = pickle.load(f)
+            if isinstance(cached, dict) and cached:
+                return cached
+        except Exception:
+            pass
+    out = _fdr_sector_map()
+    krx_map = _krx_sector_map()
+    if not out:
+        out = krx_map
+    else:
+        for code, sec in krx_map.items():
+            out.setdefault(code, sec)
+    if out:
+        with cp.open("wb") as f:
+            pickle.dump(out, f)
+    return out
+
+
 def get_kospi_index(start: str, end: str, cache_dir: str = ".cache_kospi") -> pd.DataFrame | None:
     """KOSPI 종합지수 (KS11) - 비교용."""
     cp = _cache_path("index_kospi", cache_dir)

@@ -73,6 +73,11 @@
   <div class="charts" id="chartsArea"></div>
 
   <details open>
+    <summary>Sector rotation 랭킹 (BSR / MFHR by sector)</summary>
+    <div id="sectorArea"></div>
+  </details>
+
+  <details open>
     <summary>오늘의 Quality 브레이크아웃 종목 (RS≥70)</summary>
     <div id="picksArea"></div>
   </details>
@@ -114,6 +119,10 @@ function renderKPIs(s) {
     { label: 'Quality 브레이크아웃', value: fmtInt(l.quality_breakouts) },
     { label: '20d 브레이크아웃 hit rate', value: fmtPct(l.bo_hit_rate), cls: colorPct(l.bo_hit_rate) },
     { label: '모멘텀 데실 hit rate', value: fmtPct(l.factor_hit_rate), cls: colorPct(l.factor_hit_rate) },
+    { label: 'Rotation score', value: fmtNum(l.rotation_score, 3),
+      cls: l.rotation_score == null ? '' : (l.rotation_score >= 0.15 ? 'green' : (l.rotation_score < 0.05 ? 'red' : '')) },
+    { label: '주도 섹터', value: l.top_sector || '—', cls: 'green' },
+    { label: '약세 섹터', value: l.bottom_sector || '—', cls: 'red' },
     { label: '평균 RS rank', value: fmtNum(l.avg_rs_rank, 1) },
   ];
   document.getElementById('kpiArea').innerHTML = '<div class="kpi-grid">' +
@@ -182,6 +191,45 @@ function renderCharts(series) {
     trace('모멘텀 데실 +ret hit rate', series.factor_hit_rate_pos, '#56d4dd', { scale: 100 }),
     trace('모멘텀 데실 +5% hit rate', series.factor_hit_rate_5pct, '#f78166', { scale: 100 }),
   ], Object.assign({}, LAYOUT, { yaxis: Object.assign({}, LAYOUT.yaxis, { ticksuffix: '%' }) }), PCFG);
+
+  const c6 = chartCard('c-rot', 'Sector rotation score (BSR/MFHR 섹터 분산)', true);
+  area.appendChild(c6);
+  Plotly.newPlot('c-rot', [
+    trace('Rotation score', series.rotation_score, '#f0b400'),
+    trace('BSR spread', series.bsr_spread, '#bc8cff'),
+    trace('MFHR spread', series.mfhr_spread, '#56d4dd'),
+  ], Object.assign({}, LAYOUT), PCFG);
+}
+
+function renderSectorRanking(ranking) {
+  const el = document.getElementById('sectorArea');
+  if (!ranking || ranking.length === 0) {
+    el.innerHTML = '<p class="empty">섹터 매핑 또는 시그널 부족.</p>';
+    return;
+  }
+  const cols = [
+    { k: 'sector', t: 'Sector' },
+    { k: 'bsr', t: 'BSR', fmt: v => (v * 100).toFixed(1) + '%' },
+    { k: 'bsr_n', t: 'BSR n', fmt: v => Math.round(v) },
+    { k: 'mfhr', t: 'MFHR', fmt: v => (v * 100).toFixed(1) + '%' },
+    { k: 'mfhr_n', t: 'MFHR n', fmt: v => Math.round(v) },
+    { k: 'composite_rank', t: 'Composite', fmt: v => v.toFixed(1) },
+  ];
+  let html = '<table><thead><tr>' + cols.map(c => `<th>${c.t}</th>`).join('') + '</tr></thead><tbody>';
+  for (const r of ranking) {
+    html += '<tr>';
+    for (const c of cols) {
+      const v = r[c.k];
+      if (v == null || (typeof v === 'number' && isNaN(v))) { html += '<td>—</td>'; continue; }
+      let cls = '';
+      if (c.k === 'bsr' || c.k === 'mfhr') cls = v >= 0.55 ? 'green' : (v <= 0.4 ? 'red' : '');
+      const text = c.fmt ? c.fmt(v) : v;
+      html += `<td class="${cls}">${text}</td>`;
+    }
+    html += '</tr>';
+  }
+  html += '</tbody></table>';
+  el.innerHTML = html;
 }
 
 function renderPicks(picks) {
@@ -223,6 +271,7 @@ function renderPNG() {
 function renderResult(summary) {
   renderKPIs(summary);
   renderCharts(summary.series || {});
+  renderSectorRanking(summary.sector_ranking || []);
   renderPicks(summary.picks || []);
   renderPNG();
 }

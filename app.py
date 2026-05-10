@@ -38,12 +38,35 @@ def _series(df: pd.DataFrame | None, col: str) -> list[dict]:
     return [{"date": d.strftime("%Y-%m-%d"), "value": float(v)} for d, v in s.items()]
 
 
+def _safe_records(df: pd.DataFrame | None) -> list[dict]:
+    """NaN/inf를 None으로 변환해 JSON-safe records 반환."""
+    if df is None or df.empty:
+        return []
+    out: list[dict] = []
+    for _, row in df.iterrows():
+        rec: dict = {}
+        for k, v in row.items():
+            if isinstance(v, float):
+                if not (v == v) or v in (float("inf"), float("-inf")):  # NaN / inf
+                    rec[k] = None
+                else:
+                    rec[k] = float(v)
+            elif pd.isna(v):
+                rec[k] = None
+            else:
+                rec[k] = v
+        out.append(rec)
+    return out
+
+
 def _summarize(res: dict[str, Any]) -> dict[str, Any]:
     leading = res["leading"]
     bo_rolling = res["breakout_rolling"]
     factor = res["factor_hit_rate"]
     picks = res["today_picks"]
     kospi = res.get("kospi_index")
+    rotation = res.get("rotation_score")
+    sector_ranking = res.get("sector_ranking")
 
     summary: dict[str, Any] = {
         "n_stocks": len(res["prepared"]),
@@ -92,6 +115,29 @@ def _summarize(res: dict[str, Any]) -> dict[str, Any]:
         summary["series"]["factor_avg_ret"] = _series(factor, "avg_ret")
         summary["latest"]["factor_hit_rate"] = float(factor["hit_rate_pos"].iloc[-1])
         summary["latest"]["factor_avg_ret"] = float(factor["avg_ret"].iloc[-1])
+
+    if rotation is not None and not rotation.empty:
+        if "rotation_score" in rotation.columns:
+            summary["series"]["rotation_score"] = _series(rotation, "rotation_score")
+            valid = rotation.dropna(subset=["rotation_score"])
+            if not valid.empty:
+                last = valid.iloc[-1]
+                summary["latest"]["rotation_score"] = float(last["rotation_score"])
+                if "bsr_spread" in valid.columns and pd.notna(last.get("bsr_spread")):
+                    summary["latest"]["bsr_spread"] = float(last["bsr_spread"])
+                if "mfhr_spread" in valid.columns and pd.notna(last.get("mfhr_spread")):
+                    summary["latest"]["mfhr_spread"] = float(last["mfhr_spread"])
+        if "bsr_spread" in rotation.columns:
+            summary["series"]["bsr_spread"] = _series(rotation, "bsr_spread")
+        if "mfhr_spread" in rotation.columns:
+            summary["series"]["mfhr_spread"] = _series(rotation, "mfhr_spread")
+
+    if sector_ranking is not None and not sector_ranking.empty:
+        summary["sector_ranking"] = _safe_records(sector_ranking)
+        first = sector_ranking.iloc[0]
+        last_row = sector_ranking.iloc[-1]
+        summary["latest"]["top_sector"] = str(first["sector"])
+        summary["latest"]["bottom_sector"] = str(last_row["sector"])
 
     if not picks.empty:
         summary["picks"] = picks.to_dict(orient="records")
