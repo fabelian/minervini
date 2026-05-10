@@ -100,10 +100,12 @@ def build_leading_indicator(prepared: dict[str, pd.DataFrame]) -> pd.DataFrame:
 
 
 def todays_picks(prepared: dict[str, pd.DataFrame], cfg: Config,
-                 listing: pd.DataFrame | None = None) -> pd.DataFrame:
+                 listing: pd.DataFrame | None = None,
+                 sector_map: dict[str, str] | None = None) -> pd.DataFrame:
     name_map: dict[str, str] = {}
     if listing is not None and "Code" in listing.columns and "Name" in listing.columns:
         name_map = dict(zip(listing["Code"].astype(str).str.zfill(6), listing["Name"]))
+    sector_map = sector_map or {}
     rows = []
     for code, df in prepared.items():
         last = df.iloc[-1]
@@ -115,6 +117,7 @@ def todays_picks(prepared: dict[str, pd.DataFrame], cfg: Config,
         rows.append({
             "code": code,
             "name": name_map.get(code, ""),
+            "sector": sector_map.get(code, ""),
             "close": float(last["Close"]),
             "rs_rank": rs,
             "ret_3m": float(last.get("ret_3m", np.nan)),
@@ -196,7 +199,7 @@ def run(cfg: Config | None = None, max_stocks: int | None = None,
     rotation = sector_rotation_score(bsr_by_sector, mfhr_by_sector)
     sector_ranking = sector_latest_ranking(bsr_by_sector, mfhr_by_sector)
 
-    picks = todays_picks(prepared, cfg, listing)
+    picks = todays_picks(prepared, cfg, listing, sector_map)
     kospi_idx = get_kospi_index(start, end, cfg.cache_dir)
     if kospi_idx is not None and not kospi_idx.empty:
         kospi_idx = kospi_idx.loc[kospi_idx.index <= end_ts]

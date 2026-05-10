@@ -40,6 +40,7 @@
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
   th, td { padding: 6px 10px; border-bottom: 1px solid #21262d; text-align: right; }
   th:nth-child(-n+2), td:nth-child(-n+2) { text-align: left; }
+  td.align-left, th.align-left { text-align: left; }
   th { color: var(--muted); font-weight: 500; text-transform: uppercase; font-size: 11px; }
   tr:hover { background: #1a2230; }
   .green { color: var(--green); }
@@ -244,6 +245,7 @@ function renderPicks(picks) {
   }
   const cols = [
     { k: 'code', t: 'Code' }, { k: 'name', t: 'Name' },
+    { k: 'sector', t: 'Sector', align: 'left' },
     { k: 'close', t: 'Close', fmt: v => v.toLocaleString() },
     { k: 'rs_rank', t: 'RS Rank', fmt: v => v.toFixed(1) },
     { k: 'ret_3m', t: '3M Ret', fmt: v => (v * 100).toFixed(1) + '%', signed: true },
@@ -251,15 +253,19 @@ function renderPicks(picks) {
     { k: 'pct_from_high', t: '52W high까지', fmt: v => (v * 100).toFixed(1) + '%', signed: true },
     { k: 'vol_ratio', t: 'Vol×', fmt: v => v.toFixed(2) + 'x' },
   ];
-  let html = '<table><thead><tr>' + cols.map(c => `<th>${c.t}</th>`).join('') + '</tr></thead><tbody>';
+  const alignClass = c => c.align === 'left' ? 'align-left' : '';
+  let html = '<table><thead><tr>' + cols.map(c => `<th class="${alignClass(c)}">${c.t}</th>`).join('') + '</tr></thead><tbody>';
   for (const p of picks) {
     html += '<tr>';
     for (const c of cols) {
       const v = p[c.k];
-      if (v == null || (typeof v === 'number' && isNaN(v))) { html += '<td>—</td>'; continue; }
-      const cls = c.signed ? (v > 0 ? 'green' : (v < 0 ? 'red' : '')) : '';
+      const al = alignClass(c);
+      if (v == null || v === '' || (typeof v === 'number' && isNaN(v))) {
+        html += `<td class="${al}">—</td>`; continue;
+      }
+      const cls = (c.signed ? (v > 0 ? 'green' : (v < 0 ? 'red' : '')) : '') + (al ? ' ' + al : '');
       const text = c.fmt ? c.fmt(v) : v;
-      html += `<td class="${cls}">${text}</td>`;
+      html += `<td class="${cls.trim()}">${text}</td>`;
     }
     html += '</tr>';
   }
