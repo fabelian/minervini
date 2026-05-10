@@ -129,10 +129,15 @@ def todays_picks(prepared: dict[str, pd.DataFrame], cfg: Config,
     return pd.DataFrame(rows).sort_values("rs_rank", ascending=False).reset_index(drop=True)
 
 
-def run(cfg: Config | None = None, max_stocks: int | None = None) -> dict[str, Any]:
+def run(cfg: Config | None = None, max_stocks: int | None = None,
+        as_of: str | None = None) -> dict[str, Any]:
     cfg = cfg or Config()
-    end = datetime.now().strftime("%Y-%m-%d")
-    start = (datetime.now() - timedelta(days=int(cfg.lookback_days * 1.6))).strftime("%Y-%m-%d")
+    if as_of:
+        end_ts = pd.Timestamp(as_of).normalize()
+    else:
+        end_ts = pd.Timestamp(datetime.now()).normalize()
+    end = end_ts.strftime("%Y-%m-%d")
+    start = (end_ts - pd.Timedelta(days=int(cfg.lookback_days * 1.6))).strftime("%Y-%m-%d")
 
     print(f"[1/6] KOSPI 종목 리스트 + 섹터 매핑 로딩 ({end})")
     listing = get_kospi_listing(cfg.cache_dir)
@@ -145,6 +150,9 @@ def run(cfg: Config | None = None, max_stocks: int | None = None) -> dict[str, A
 
     print(f"[2/6] OHLCV 다운로드 (기간 {start}~{end}, 캐시 사용)")
     raw = get_ohlcv_batch(codes, start, end, cfg.cache_dir, workers=cfg.download_workers)
+    # 캐시에 as_of 이후 데이터가 있을 수 있으므로 명시적으로 절단
+    raw = {c: d.loc[d.index <= end_ts] for c, d in raw.items() if d is not None}
+    raw = {c: d for c, d in raw.items() if not d.empty}
     print(f"      수집 종목: {len(raw)}")
 
     print("[3/6] 유동성 필터")
@@ -190,6 +198,8 @@ def run(cfg: Config | None = None, max_stocks: int | None = None) -> dict[str, A
 
     picks = todays_picks(prepared, cfg, listing)
     kospi_idx = get_kospi_index(start, end, cfg.cache_dir)
+    if kospi_idx is not None and not kospi_idx.empty:
+        kospi_idx = kospi_idx.loc[kospi_idx.index <= end_ts]
 
     return {
         "config": cfg,

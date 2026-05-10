@@ -64,7 +64,11 @@
     <label>대상 종목 수
       <input type="number" id="maxStocks" value="50" min="5" max="1000" style="width:80px;margin-left:6px;">
     </label>
+    <label>기준일
+      <input type="date" id="asOf" style="margin-left:6px;">
+    </label>
     <button id="runBtn">실행</button>
+    <button id="clearAsOfBtn" type="button" title="기준일을 비워 오늘 기준으로 실행">오늘</button>
     <span class="status" id="status">준비됨</span>
   </div>
 
@@ -300,8 +304,13 @@ async function poll(jobId, runBtn, statusEl) {
   }
 }
 
+document.getElementById('clearAsOfBtn').addEventListener('click', () => {
+  document.getElementById('asOf').value = '';
+});
+
 document.getElementById('runBtn').addEventListener('click', async () => {
   const max_stocks = parseInt(document.getElementById('maxStocks').value) || null;
+  const as_of = document.getElementById('asOf').value || null;
   const btn = document.getElementById('runBtn');
   const status = document.getElementById('status');
   btn.disabled = true;
@@ -310,10 +319,11 @@ document.getElementById('runBtn').addEventListener('click', async () => {
     const r = await fetch('/api/run', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ max_stocks }),
+      body: JSON.stringify({ max_stocks, as_of }),
     });
     const j = await r.json();
-    status.innerHTML = `<span class="spinner"></span> 대기 (job ${j.job_id})`;
+    const tag = as_of ? ` · as-of ${as_of}` : '';
+    status.innerHTML = `<span class="spinner"></span> 대기 (job ${j.job_id})${tag}`;
     if (pollTimer) clearInterval(pollTimer);
     pollTimer = setInterval(() => poll(j.job_id, btn, status), 2000);
   } catch (e) {

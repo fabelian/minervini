@@ -150,13 +150,13 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-def _execute(job_id: str, max_stocks: int | None) -> None:
+def _execute(job_id: str, max_stocks: int | None, as_of: str | None) -> None:
     with JOBS_LOCK:
         JOBS[job_id]["status"] = "running"
         JOBS[job_id]["started_at"] = _now_iso()
     try:
         cfg = Config()
-        res = run_pipeline(cfg, max_stocks=max_stocks)
+        res = run_pipeline(cfg, max_stocks=max_stocks, as_of=as_of)
         if not res["leading"].empty:
             plot_dashboard(
                 res["leading"],
@@ -182,6 +182,7 @@ def _execute(job_id: str, max_stocks: int | None) -> None:
 
 class RunRequest(BaseModel):
     max_stocks: int | None = None
+    as_of: str | None = None
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -204,9 +205,10 @@ def post_run(req: RunRequest) -> dict:
         JOBS[job_id] = {
             "status": "queued",
             "max_stocks": req.max_stocks,
+            "as_of": req.as_of,
             "queued_at": _now_iso(),
         }
-    Thread(target=_execute, args=(job_id, req.max_stocks), daemon=True).start()
+    Thread(target=_execute, args=(job_id, req.max_stocks, req.as_of), daemon=True).start()
     return {"job_id": job_id, "status": "queued"}
 
 

@@ -84,6 +84,8 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="KOSPI 모멘텀/브레이크아웃 leading indicator")
     ap.add_argument("--max-stocks", type=int, default=None,
                     help="유니버스를 N개로 제한 (테스트용)")
+    ap.add_argument("--as-of", default=None,
+                    help="기준일 (YYYY-MM-DD). 미지정시 오늘. 과거 시점으로 백테스트하듯 실행 가능.")
     ap.add_argument("--out-dir", default="output_kospi",
                     help="리포트 저장 디렉토리")
     ap.add_argument("--no-plot", action="store_true",
@@ -91,7 +93,7 @@ def main() -> None:
     args = ap.parse_args()
 
     cfg = Config()
-    res = run(cfg, max_stocks=args.max_stocks)
+    res = run(cfg, max_stocks=args.max_stocks, as_of=args.as_of)
 
     out = Path(args.out_dir)
     out.mkdir(parents=True, exist_ok=True)
