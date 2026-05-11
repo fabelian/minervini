@@ -15,6 +15,7 @@ from pydantic import BaseModel
 from config import Config
 from monitor import run as run_pipeline
 from plot import plot_dashboard
+from chat_agent import ChatAgent, DashboardContext
 
 
 app = FastAPI(title="KOSPI Momentum Monitor", version="0.1.0")
@@ -245,6 +246,34 @@ def dashboard_png():
     if not p.exists():
         raise HTTPException(404, "dashboard not generated yet")
     return FileResponse(p, media_type="image/png")
+
+
+# ---------- Chat ----------
+
+class ChatMessage(BaseModel):
+    role: str
+    content: str
+
+
+class ChatRequest(BaseModel):
+    messages: list[ChatMessage]
+    model: str | None = None
+    provider: str | None = None  # "anthropic" | "openrouter"
+
+
+@app.post("/api/chat")
+def post_chat(req: ChatRequest) -> dict:
+    provider = (req.provider or "anthropic").lower()
+    summary = (LATEST.get("summary") if LATEST else {}) or {}
+    ctx = DashboardContext(latest_summary=summary, output_dir=OUTPUT_DIR)
+    try:
+        agent = ChatAgent(model=req.model, provider=provider, context=ctx)
+        reply = agent.chat([m.model_dump() for m in req.messages])
+        return {"reply": reply, "model": agent.model, "provider": provider}
+    except EnvironmentError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(500, f"{type(e).__name__}: {e}")
 
 
 if __name__ == "__main__":

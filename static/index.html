@@ -53,6 +53,36 @@
   .spinner { display: inline-block; width: 12px; height: 12px; border: 2px solid var(--muted);
              border-top-color: var(--accent); border-radius: 50%; animation: spin 1s linear infinite; vertical-align: -2px; }
   @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* 우하단 플로팅 챗 패널 */
+  .chat-panel { position: fixed; bottom: 20px; right: 20px; width: 380px; height: 540px;
+                background: var(--bg2); border: 1px solid var(--border); border-radius: 10px;
+                display: flex; flex-direction: column; box-shadow: 0 8px 32px rgba(0,0,0,0.55);
+                z-index: 1000; transition: height 0.18s, width 0.18s; }
+  .chat-panel[data-open="false"] { height: 44px; overflow: hidden; }
+  .chat-header { display: flex; gap: 8px; align-items: center; padding: 10px 12px;
+                 border-bottom: 1px solid var(--border); cursor: pointer; user-select: none; }
+  .chat-header > .chat-title { font-weight: 600; flex: 1; color: var(--accent); font-size: 13px; }
+  .chat-header select { background: var(--bg); color: var(--text); border: 1px solid var(--border);
+                        border-radius: 4px; padding: 2px 6px; font-size: 11px; cursor: pointer; }
+  .chat-header button { background: transparent; border: none; color: var(--text); cursor: pointer;
+                        font-size: 14px; padding: 0 6px; line-height: 1; }
+  .chat-body { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+  .chat-msg { max-width: 90%; padding: 8px 12px; border-radius: 10px; font-size: 13px;
+              line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+  .chat-msg.user { background: #1f6feb; color: white; align-self: flex-end; }
+  .chat-msg.assistant { background: #21262d; color: var(--text); align-self: flex-start; border: 1px solid var(--border); }
+  .chat-msg.error { background: #5a1d1d; color: #ffb4b4; align-self: flex-start; }
+  .chat-msg.thinking { opacity: 0.7; font-style: italic; }
+  .chat-empty { color: var(--muted); font-size: 12px; padding: 8px; text-align: center; }
+  .chat-input { display: flex; gap: 8px; padding: 8px 10px; border-top: 1px solid var(--border); }
+  .chat-input textarea { flex: 1; background: var(--bg); color: var(--text); border: 1px solid var(--border);
+                         border-radius: 6px; padding: 6px 8px; resize: none; font-family: inherit;
+                         font-size: 13px; outline: none; }
+  .chat-input textarea:focus { border-color: var(--accent); }
+  .chat-input button { background: #238636; color: white; border: none; border-radius: 6px;
+                       padding: 0 14px; cursor: pointer; font-weight: 600; }
+  .chat-input button:disabled { background: var(--border); cursor: not-allowed; }
 </style>
 </head>
 <body>
@@ -93,6 +123,30 @@
   </details>
 </main>
 <div class="footer">github.com/fabelian/minervini · KOSPI 한정</div>
+
+<div class="chat-panel" id="chatPanel" data-open="false">
+  <div class="chat-header" id="chatHeader">
+    <span class="chat-title">AI 챗</span>
+    <select id="chatModel" title="모델 선택">
+      <option value="claude-sonnet-4-6">Sonnet 4.6</option>
+      <option value="claude-opus-4-7">Opus 4.7</option>
+      <option value="claude-haiku-4-5-20251001">Haiku 4.5</option>
+      <option value="openrouter:openai/gpt-4o">GPT-4o (OR)</option>
+      <option value="openrouter:openai/gpt-4o-mini">GPT-4o-mini (OR)</option>
+      <option value="openrouter:google/gemini-2.0-flash-001">Gemini 2 Flash (OR)</option>
+      <option value="openrouter:deepseek/deepseek-chat">DeepSeek (OR)</option>
+    </select>
+    <button id="chatClear" title="대화 초기화">⟲</button>
+    <button id="chatToggle" title="패널 토글">▢</button>
+  </div>
+  <div class="chat-body" id="chatBody">
+    <div class="chat-empty" id="chatEmpty">질문을 입력하면 대시보드 데이터까지 직접 조회해 답합니다.</div>
+  </div>
+  <div class="chat-input">
+    <textarea id="chatInput" placeholder="질문을 입력하세요 (Enter=전송, Shift+Enter=줄바꿈)" rows="2"></textarea>
+    <button id="chatSend">전송</button>
+  </div>
+</div>
 
 <script>
 const LAYOUT = {
@@ -351,6 +405,96 @@ document.getElementById('runBtn').addEventListener('click', async () => {
       }
     }
   } catch (e) { /* ignore */ }
+})();
+
+// 우하단 챗 패널
+(() => {
+  const panel = document.getElementById('chatPanel');
+  const header = document.getElementById('chatHeader');
+  const toggle = document.getElementById('chatToggle');
+  const clearBtn = document.getElementById('chatClear');
+  const body = document.getElementById('chatBody');
+  const emptyHint = document.getElementById('chatEmpty');
+  const input = document.getElementById('chatInput');
+  const send = document.getElementById('chatSend');
+  const modelSel = document.getElementById('chatModel');
+  const history = [];
+
+  function setOpen(open) {
+    panel.dataset.open = String(!!open);
+    toggle.textContent = open ? '–' : '▢';
+    if (open) setTimeout(() => input.focus(), 100);
+  }
+  setOpen(false);
+
+  header.addEventListener('click', e => {
+    if (e.target === modelSel || e.target === clearBtn) return;
+    setOpen(panel.dataset.open !== 'true');
+  });
+
+  clearBtn.addEventListener('click', e => {
+    e.stopPropagation();
+    history.length = 0;
+    body.innerHTML = '';
+    body.appendChild(emptyHint);
+  });
+
+  function addMsg(role, text) {
+    if (emptyHint.parentNode === body) emptyHint.remove();
+    const div = document.createElement('div');
+    div.className = 'chat-msg ' + role;
+    div.textContent = text;
+    body.appendChild(div);
+    body.scrollTop = body.scrollHeight;
+    return div;
+  }
+
+  async function doSend() {
+    const text = input.value.trim();
+    if (!text) return;
+    input.value = '';
+    addMsg('user', text);
+    history.push({ role: 'user', content: text });
+    const thinking = addMsg('assistant thinking', '⋯ 생각 중…');
+    send.disabled = true;
+    const sel = modelSel.value;
+    let provider = 'anthropic';
+    let model = sel;
+    if (sel.startsWith('openrouter:')) {
+      provider = 'openrouter';
+      model = sel.slice('openrouter:'.length);
+    }
+    try {
+      const r = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messages: history, model, provider }),
+      });
+      const j = await r.json();
+      if (!r.ok) {
+        thinking.className = 'chat-msg error';
+        thinking.textContent = j.detail || ('오류: HTTP ' + r.status);
+        return;
+      }
+      thinking.className = 'chat-msg assistant';
+      thinking.textContent = j.reply || '(빈 응답)';
+      history.push({ role: 'assistant', content: j.reply || '' });
+    } catch (e) {
+      thinking.className = 'chat-msg error';
+      thinking.textContent = '오류: ' + e.message;
+    } finally {
+      send.disabled = false;
+      body.scrollTop = body.scrollHeight;
+    }
+  }
+
+  send.addEventListener('click', doSend);
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      doSend();
+    }
+  });
 })();
 </script>
 </body>
