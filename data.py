@@ -134,30 +134,64 @@ def get_ohlcv_batch(codes: list[str], start: str, end: str, cache_dir: str = ".c
 # ---------- 섹터 매핑 ----------
 
 def _fdr_sector_map() -> dict[str, str]:
+    """FDR에서 KOSPI 종목별 섹터 매핑을 구한다.
+
+    FDR `StockListing("KOSPI")`에는 Sector/Industry 컬럼이 없다.
+    `StockListing("KRX-DESC")`가 Sector/Industry 컬럼을 제공하므로 그쪽을 사용한다.
+    KOSPI 종목은 Sector가 거의 비어있고 Industry만 채워져 있어 Industry를 우선 사용한다."""
     if not _HAS_FDR:
         return {}
-    try:
-        df = fdr.StockListing("KOSPI")
-    except Exception:
+    df = None
+    for listing in ("KRX-DESC", "KOSPI"):
+        try:
+            cand = fdr.StockListing(listing)
+        except Exception:
+            continue
+        if cand is None or cand.empty:
+            continue
+        cols = set(cand.columns)
+        if "Sector" in cols or "Industry" in cols or "업종" in cols:
+            df = cand
+            break
+    if df is None:
         return {}
+
     code_col = None
     for cand in ("Code", "Symbol", "code", "ticker"):
         if cand in df.columns:
             code_col = cand
             break
-    sec_col = None
-    for cand in ("Sector", "sector", "Industry", "업종"):
-        if cand in df.columns:
-            sec_col = cand
-            break
-    if not code_col or not sec_col:
+    if not code_col:
         return {}
+
+    # Market 컬럼이 있으면 KOSPI만 필터
+    if "Market" in df.columns:
+        df = df[df["Market"].astype(str).str.upper() == "KOSPI"]
+
+    # Industry를 우선 (KOSPI 커버리지 ↑), 비어있으면 Sector로 폴백
+    primary = next((c for c in ("Industry", "Sector", "sector", "업종") if c in df.columns), None)
+    secondary = next((c for c in ("Sector", "Industry", "sector", "업종")
+                      if c in df.columns and c != primary), None)
+    if primary is None:
+        return {}
+
     out: dict[str, str] = {}
-    for c, s in zip(df[code_col].astype(str).str.zfill(6), df[sec_col]):
-        if pd.notna(s):
-            sv = str(s).strip()
-            if sv and sv.lower() != "nan":
-                out[c] = sv
+    codes = df[code_col].astype(str).str.zfill(6)
+    p_vals = df[primary]
+    s_vals = df[secondary] if secondary else [None] * len(df)
+    for c, p, s in zip(codes, p_vals, s_vals):
+        sv = None
+        for cand in (p, s):
+            if cand is None:
+                continue
+            if pd.isna(cand):
+                continue
+            text = str(cand).strip()
+            if text and text.lower() != "nan":
+                sv = text
+                break
+        if sv:
+            out[c] = sv
     return out
 
 
