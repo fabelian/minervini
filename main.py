@@ -81,21 +81,23 @@ def _print_summary(res: dict) -> None:
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="KOSPI 모멘텀/브레이크아웃 leading indicator")
+    ap = argparse.ArgumentParser(description="KOSPI / NASDAQ 모멘텀·브레이크아웃 leading indicator")
+    ap.add_argument("--market", choices=["KOSPI", "NASDAQ"], default="KOSPI",
+                    help="대상 시장 (기본 KOSPI)")
     ap.add_argument("--max-stocks", type=int, default=None,
                     help="유니버스를 N개로 제한 (테스트용)")
     ap.add_argument("--as-of", default=None,
                     help="기준일 (YYYY-MM-DD). 미지정시 오늘. 과거 시점으로 백테스트하듯 실행 가능.")
-    ap.add_argument("--out-dir", default="output_kospi",
-                    help="리포트 저장 디렉토리")
+    ap.add_argument("--out-dir", default=None,
+                    help="리포트 저장 디렉토리 (기본: output_<market>)")
     ap.add_argument("--no-plot", action="store_true",
                     help="대시보드 PNG 생략")
     args = ap.parse_args()
 
-    cfg = Config()
+    cfg = Config.for_market(args.market)
     res = run(cfg, max_stocks=args.max_stocks, as_of=args.as_of)
 
-    out = Path(args.out_dir)
+    out = Path(args.out_dir or f"output_{cfg.market.lower()}")
     out.mkdir(parents=True, exist_ok=True)
 
     if not res["leading"].empty:
@@ -126,8 +128,9 @@ def main() -> None:
             res["leading"],
             res["breakout_rolling"],
             res["factor_hit_rate"],
-            res["kospi_index"],
+            res.get("benchmark_index") or res.get("kospi_index"),
             out / "dashboard.png",
+            market=cfg.market,
         )
         print(f"\n대시보드 저장: {png}")
 

@@ -1,14 +1,14 @@
-"""KOSPI 모멘텀/브레이크아웃 모니터 설정값."""
+"""KOSPI / NASDAQ 모멘텀·브레이크아웃 모니터 설정값."""
 from dataclasses import dataclass, field
 
 
 @dataclass
 class Config:
-    market: str = "KOSPI"
-    lookback_days: int = 504           # 약 2년 (252 거래일/년)
+    market: str = "KOSPI"               # "KOSPI" | "NASDAQ"
+    lookback_days: int = 504            # 약 2년 (252 거래일/년)
 
-    # 유동성 필터
-    min_price_krw: int = 2_000
+    # 유동성 필터 — 통화는 시장에 따른다 (KRW / USD)
+    min_price: float = 2_000.0
     min_avg_volume: int = 50_000        # 최근 60거래일 평균 거래량
 
     # 이동평균 윈도우
@@ -39,3 +39,10 @@ class Config:
 
     # 행동 가능한 종목 필터
     pick_min_rs_rank: float = 70.0
+
+    @classmethod
+    def for_market(cls, market: str) -> "Config":
+        m = (market or "KOSPI").upper()
+        if m == "NASDAQ":
+            return cls(market="NASDAQ", min_price=5.0, cache_dir=".cache_nasdaq")
+        return cls(market="KOSPI", min_price=2_000.0, cache_dir=".cache_kospi")

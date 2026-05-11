@@ -18,16 +18,27 @@ from plot import plot_dashboard
 from chat_agent import ChatAgent, DashboardContext
 
 
-app = FastAPI(title="KOSPI Momentum Monitor", version="0.1.0")
+app = FastAPI(title="KOSPI / NASDAQ Momentum Monitor", version="0.2.0")
 
 ROOT = Path(__file__).parent
 STATIC_DIR = ROOT / "static"
-OUTPUT_DIR = ROOT / "output_kospi"
-OUTPUT_DIR.mkdir(exist_ok=True)
+SUPPORTED_MARKETS = ("KOSPI", "NASDAQ")
+OUTPUT_DIRS: dict[str, Path] = {m: ROOT / f"output_{m.lower()}" for m in SUPPORTED_MARKETS}
+for d in OUTPUT_DIRS.values():
+    d.mkdir(exist_ok=True)
+# 하위호환: 기존 코드 일부가 OUTPUT_DIR을 참조하는 경우를 위해 default = KOSPI
+OUTPUT_DIR = OUTPUT_DIRS["KOSPI"]
 
 JOBS: dict[str, dict[str, Any]] = {}
 JOBS_LOCK = Lock()
-LATEST: dict[str, Any] = {}
+LATEST_BY_MARKET: dict[str, dict[str, Any]] = {}
+
+
+def _resolve_market(value: str | None) -> str:
+    m = (value or "KOSPI").upper()
+    if m not in OUTPUT_DIRS:
+        raise HTTPException(400, f"unsupported market: {m}")
+    return m
 
 
 # ---------- 직렬화 ----------
@@ -65,11 +76,16 @@ def _summarize(res: dict[str, Any]) -> dict[str, Any]:
     bo_rolling = res["breakout_rolling"]
     factor = res["factor_hit_rate"]
     picks = res["today_picks"]
-    kospi = res.get("kospi_index")
+    bench = res.get("benchmark_index")
+    if bench is None:
+        bench = res.get("kospi_index")
     rotation = res.get("rotation_score")
     sector_ranking = res.get("sector_ranking")
+    cfg_obj = res.get("config")
+    market = getattr(cfg_obj, "market", "KOSPI") if cfg_obj is not None else "KOSPI"
 
     summary: dict[str, Any] = {
+        "market": market,
         "n_stocks": len(res["prepared"]),
         "as_of": leading.index[-1].strftime("%Y-%m-%d") if not leading.empty else None,
         "latest": {},
@@ -99,8 +115,8 @@ def _summarize(res: dict[str, Any]) -> dict[str, Any]:
             "pivot_breakouts": _series(leading, "pivot_breakouts"),
         })
 
-    if kospi is not None and not kospi.empty:
-        summary["series"]["kospi"] = _series(kospi, "Close")
+    if bench is not None and not bench.empty:
+        summary["series"]["kospi"] = _series(bench, "Close")  # 클라이언트는 시장 무관하게 'kospi' 키로 KOSPI/IXIC 시리즈를 표시
 
     if not bo_rolling.empty:
         summary["series"]["bo_hit_rate"] = _series(bo_rolling, "roll_hit_rate")
@@ -151,27 +167,30 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-def _execute(job_id: str, max_stocks: int | None, as_of: str | None) -> None:
+def _execute(job_id: str, max_stocks: int | None, as_of: str | None,
+             market: str) -> None:
     with JOBS_LOCK:
         JOBS[job_id]["status"] = "running"
         JOBS[job_id]["started_at"] = _now_iso()
     try:
-        cfg = Config()
+        cfg = Config.for_market(market)
         res = run_pipeline(cfg, max_stocks=max_stocks, as_of=as_of)
+        out_dir = OUTPUT_DIRS[market]
         if not res["leading"].empty:
             plot_dashboard(
                 res["leading"],
                 res.get("breakout_rolling"),
                 res.get("factor_hit_rate"),
-                res.get("kospi_index"),
-                OUTPUT_DIR / "dashboard.png",
+                res.get("benchmark_index") or res.get("kospi_index"),
+                out_dir / "dashboard.png",
+                market=market,
             )
         summary = _summarize(res)
         with JOBS_LOCK:
             JOBS[job_id]["status"] = "completed"
             JOBS[job_id]["finished_at"] = _now_iso()
             JOBS[job_id]["summary"] = summary
-        LATEST.update({"job_id": job_id, "ts": _now_iso(), "summary": summary})
+        LATEST_BY_MARKET[market] = {"job_id": job_id, "ts": _now_iso(), "summary": summary}
     except Exception as e:  # noqa: BLE001
         with JOBS_LOCK:
             JOBS[job_id]["status"] = "failed"
@@ -184,6 +203,7 @@ def _execute(job_id: str, max_stocks: int | None, as_of: str | None) -> None:
 class RunRequest(BaseModel):
     max_stocks: int | None = None
     as_of: str | None = None
+    market: str | None = "KOSPI"
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -201,16 +221,19 @@ def health() -> dict:
 
 @app.post("/api/run")
 def post_run(req: RunRequest) -> dict:
+    market = _resolve_market(req.market)
     job_id = uuid4().hex[:12]
     with JOBS_LOCK:
         JOBS[job_id] = {
             "status": "queued",
+            "market": market,
             "max_stocks": req.max_stocks,
             "as_of": req.as_of,
             "queued_at": _now_iso(),
         }
-    Thread(target=_execute, args=(job_id, req.max_stocks, req.as_of), daemon=True).start()
-    return {"job_id": job_id, "status": "queued"}
+    Thread(target=_execute, args=(job_id, req.max_stocks, req.as_of, market),
+           daemon=True).start()
+    return {"job_id": job_id, "status": "queued", "market": market}
 
 
 @app.get("/api/status/{job_id}")
@@ -234,17 +257,20 @@ def get_result(job_id: str) -> dict:
 
 
 @app.get("/api/latest")
-def latest() -> dict:
-    if not LATEST:
-        raise HTTPException(404, "no result yet")
-    return LATEST
+def latest(market: str = "KOSPI") -> dict:
+    m = _resolve_market(market)
+    rec = LATEST_BY_MARKET.get(m)
+    if not rec:
+        raise HTTPException(404, f"no result yet for {m}")
+    return rec
 
 
 @app.get("/api/dashboard.png")
-def dashboard_png():
-    p = OUTPUT_DIR / "dashboard.png"
+def dashboard_png(market: str = "KOSPI"):
+    m = _resolve_market(market)
+    p = OUTPUT_DIRS[m] / "dashboard.png"
     if not p.exists():
-        raise HTTPException(404, "dashboard not generated yet")
+        raise HTTPException(404, f"dashboard not generated yet for {m}")
     return FileResponse(p, media_type="image/png")
 
 
@@ -259,17 +285,21 @@ class ChatRequest(BaseModel):
     messages: list[ChatMessage]
     model: str | None = None
     provider: str | None = None  # "anthropic" | "openrouter"
+    market: str | None = "KOSPI"
 
 
 @app.post("/api/chat")
 def post_chat(req: ChatRequest) -> dict:
     provider = (req.provider or "anthropic").lower()
-    summary = (LATEST.get("summary") if LATEST else {}) or {}
-    ctx = DashboardContext(latest_summary=summary, output_dir=OUTPUT_DIR)
+    market = _resolve_market(req.market)
+    rec = LATEST_BY_MARKET.get(market) or {}
+    summary = rec.get("summary") or {}
+    ctx = DashboardContext(latest_summary=summary, output_dir=OUTPUT_DIRS[market])
     try:
         agent = ChatAgent(model=req.model, provider=provider, context=ctx)
         reply = agent.chat([m.model_dump() for m in req.messages])
-        return {"reply": reply, "model": agent.model, "provider": provider}
+        return {"reply": reply, "model": agent.model, "provider": provider,
+                "market": market}
     except EnvironmentError as e:
         raise HTTPException(400, str(e))
     except Exception as e:  # noqa: BLE001

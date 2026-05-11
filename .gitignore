@@ -1,5 +1,6 @@
 # Caches
 .cache_kospi/
+.cache_nasdaq/
 __pycache__/
 *.pyc
 *.pyo
@@ -12,6 +13,7 @@ __pycache__/
 
 # Output / reports (regenerable)
 output_kospi/
+output_nasdaq/
 output_test/
 *.png
 !docs/*.png

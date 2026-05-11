@@ -38,31 +38,50 @@ def _cache_path(name: str, cache_dir: str) -> Path:
 
 # ---------- 종목 리스트 ----------
 
-def get_kospi_listing(cache_dir: str = ".cache_kospi", refresh: bool = False) -> pd.DataFrame:
-    cp = _cache_path("kospi_listing", cache_dir)
+def get_listing(cfg, refresh: bool = False) -> pd.DataFrame:
+    """시장별 종목 리스트. 'Code' 컬럼을 표준 식별자로 정규화한다."""
+    market = (cfg.market or "KOSPI").upper()
+    cache_dir = cfg.cache_dir
+    cp = _cache_path(f"{market.lower()}_listing", cache_dir)
     if cp.exists() and not refresh:
         return pd.read_pickle(cp)
 
-    if _HAS_FDR:
-        df = fdr.StockListing("KOSPI")
-        if "Code" not in df.columns:
-            for cand in ("Symbol", "code", "ticker"):
-                if cand in df.columns:
-                    df = df.rename(columns={cand: "Code"})
-                    break
-    elif _HAS_KRX:
-        today = datetime.now().strftime("%Y%m%d")
-        tickers = krx.get_market_ticker_list(today, market="KOSPI")
-        df = pd.DataFrame({
-            "Code": tickers,
-            "Name": [krx.get_market_ticker_name(t) for t in tickers],
-        })
+    if market == "KOSPI":
+        if _HAS_FDR:
+            df = fdr.StockListing("KOSPI")
+            if "Code" not in df.columns:
+                for cand in ("Symbol", "code", "ticker"):
+                    if cand in df.columns:
+                        df = df.rename(columns={cand: "Code"})
+                        break
+        elif _HAS_KRX:
+            today = datetime.now().strftime("%Y%m%d")
+            tickers = krx.get_market_ticker_list(today, market="KOSPI")
+            df = pd.DataFrame({
+                "Code": tickers,
+                "Name": [krx.get_market_ticker_name(t) for t in tickers],
+            })
+        else:
+            raise RuntimeError("FinanceDataReader 또는 pykrx 가 필요합니다.")
+        df["Code"] = df["Code"].astype(str).str.zfill(6)
+    elif market == "NASDAQ":
+        if not _HAS_FDR:
+            raise RuntimeError("NASDAQ 종목 리스트는 FinanceDataReader가 필요합니다.")
+        df = fdr.StockListing("NASDAQ")
+        if "Symbol" in df.columns and "Code" not in df.columns:
+            df = df.rename(columns={"Symbol": "Code"})
+        df["Code"] = df["Code"].astype(str)
     else:
-        raise RuntimeError("FinanceDataReader 또는 pykrx 가 필요합니다 (pip install -r requirements.txt).")
+        raise ValueError(f"unknown market: {market}")
 
-    df["Code"] = df["Code"].astype(str).str.zfill(6)
     df.to_pickle(cp)
     return df
+
+
+def get_kospi_listing(cache_dir: str = ".cache_kospi", refresh: bool = False) -> pd.DataFrame:
+    """하위호환 wrapper — 신규 코드는 get_listing(cfg)를 사용."""
+    from config import Config
+    return get_listing(Config(market="KOSPI", cache_dir=cache_dir), refresh)
 
 
 # ---------- 개별 OHLCV ----------
@@ -228,9 +247,42 @@ def _krx_sector_map() -> dict[str, str]:
     return out
 
 
-def get_sector_map(cache_dir: str = ".cache_kospi", refresh: bool = False) -> dict[str, str]:
-    """code → sector 라벨. FDR Sector 컬럼을 우선 사용하고 누락분만 pykrx로 보강."""
-    cp = _cache_path("sector_map", cache_dir)
+def _fdr_sector_map_nasdaq() -> dict[str, str]:
+    """NASDAQ — fdr.StockListing('NASDAQ')의 Industry 컬럼은 100% 채워져 있다."""
+    if not _HAS_FDR:
+        return {}
+    try:
+        df = fdr.StockListing("NASDAQ")
+    except Exception:
+        return {}
+    if "Symbol" not in df.columns or "Industry" not in df.columns:
+        return {}
+    out: dict[str, str] = {}
+    for sym, ind in zip(df["Symbol"].astype(str), df["Industry"]):
+        if pd.isna(ind):
+            continue
+        text = str(ind).strip()
+        if text and text.lower() != "nan":
+            out[sym] = text
+    return out
+
+
+def get_sector_map(cfg=None, refresh: bool = False, *,
+                   cache_dir: str | None = None,
+                   market: str | None = None) -> dict[str, str]:
+    """code → sector 라벨.
+    호출 방식 (둘 다 지원):
+      - 신규: get_sector_map(cfg)
+      - 구 호환: get_sector_map(cache_dir=..., market="KOSPI")
+    """
+    if cfg is not None:
+        market = (cfg.market or "KOSPI").upper()
+        cache_dir = cfg.cache_dir
+    else:
+        market = (market or "KOSPI").upper()
+        cache_dir = cache_dir or ".cache_kospi"
+
+    cp = _cache_path(f"sector_map_{market.lower()}", cache_dir)
     if cp.exists() and not refresh:
         try:
             with cp.open("rb") as f:
@@ -239,25 +291,38 @@ def get_sector_map(cache_dir: str = ".cache_kospi", refresh: bool = False) -> di
                 return cached
         except Exception:
             pass
-    out = _fdr_sector_map()
-    krx_map = _krx_sector_map()
-    if not out:
-        out = krx_map
+
+    if market == "NASDAQ":
+        out = _fdr_sector_map_nasdaq()
     else:
-        for code, sec in krx_map.items():
-            out.setdefault(code, sec)
+        out = _fdr_sector_map()
+        krx_map = _krx_sector_map()
+        if not out:
+            out = krx_map
+        else:
+            for code, sec in krx_map.items():
+                out.setdefault(code, sec)
+
     if out:
         with cp.open("wb") as f:
             pickle.dump(out, f)
     return out
 
 
-def get_kospi_index(start: str, end: str, cache_dir: str = ".cache_kospi") -> pd.DataFrame | None:
-    """KOSPI 종합지수 (KS11) - 비교용."""
-    cp = _cache_path("index_kospi", cache_dir)
+_MARKET_INDEX_SYMBOL = {"KOSPI": "KS11", "NASDAQ": "IXIC"}
+
+
+def get_index(cfg, start: str, end: str) -> pd.DataFrame | None:
+    """시장 벤치마크 인덱스 OHLC (KOSPI=KS11, NASDAQ=IXIC)."""
+    market = (cfg.market or "KOSPI").upper()
+    cache_dir = cfg.cache_dir
+    sym = _MARKET_INDEX_SYMBOL.get(market)
+    if not sym:
+        return None
+    cp = _cache_path(f"index_{market.lower()}", cache_dir)
     if _HAS_FDR:
         try:
-            df = fdr.DataReader("KS11", start, end)
+            df = fdr.DataReader(sym, start, end)
             if df is not None and not df.empty:
                 df.index = pd.to_datetime(df.index)
                 df.to_pickle(cp)
@@ -267,3 +332,9 @@ def get_kospi_index(start: str, end: str, cache_dir: str = ".cache_kospi") -> pd
     if cp.exists():
         return pd.read_pickle(cp)
     return None
+
+
+def get_kospi_index(start: str, end: str, cache_dir: str = ".cache_kospi") -> pd.DataFrame | None:
+    """하위호환 wrapper."""
+    from config import Config
+    return get_index(Config(market="KOSPI", cache_dir=cache_dir), start, end)

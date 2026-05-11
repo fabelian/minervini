@@ -17,7 +17,7 @@ import pandas as pd
 from tqdm import tqdm
 
 from config import Config
-from data import get_kospi_listing, get_ohlcv_batch, get_kospi_index, get_sector_map
+from data import get_listing, get_ohlcv_batch, get_index, get_sector_map
 from factors import add_smas, momentum_returns, relative_strength, trend_template, cross_sectional_rank
 from breakout import detect_breakouts
 from hit_rate import (
@@ -42,7 +42,7 @@ def _filter_universe(raw: dict[str, pd.DataFrame], cfg: Config) -> dict[str, pd.
         if recent.empty:
             continue
         last_close = recent["Close"].iloc[-1]
-        if not np.isfinite(last_close) or last_close < cfg.min_price_krw:
+        if not np.isfinite(last_close) or last_close < cfg.min_price:
             continue
         if recent["Volume"].mean() < cfg.min_avg_volume:
             continue
@@ -142,11 +142,11 @@ def run(cfg: Config | None = None, max_stocks: int | None = None,
     end = end_ts.strftime("%Y-%m-%d")
     start = (end_ts - pd.Timedelta(days=int(cfg.lookback_days * 1.6))).strftime("%Y-%m-%d")
 
-    print(f"[1/6] KOSPI 종목 리스트 + 섹터 매핑 로딩 ({end})")
-    listing = get_kospi_listing(cfg.cache_dir)
-    sector_map = get_sector_map(cfg.cache_dir)
+    print(f"[1/6] {cfg.market} 종목 리스트 + 섹터 매핑 로딩 ({end})")
+    listing = get_listing(cfg)
+    sector_map = get_sector_map(cfg)
     print(f"      섹터 매핑: {len(sector_map)}종목 → {len(set(sector_map.values()))}섹터")
-    codes = listing["Code"].astype(str).str.zfill(6).tolist()
+    codes = listing["Code"].astype(str).tolist()
     if max_stocks:
         codes = codes[:max_stocks]
     print(f"      대상 종목: {len(codes)}")
@@ -200,15 +200,16 @@ def run(cfg: Config | None = None, max_stocks: int | None = None,
     sector_ranking = sector_latest_ranking(bsr_by_sector, mfhr_by_sector)
 
     picks = todays_picks(prepared, cfg, listing, sector_map)
-    kospi_idx = get_kospi_index(start, end, cfg.cache_dir)
-    if kospi_idx is not None and not kospi_idx.empty:
-        kospi_idx = kospi_idx.loc[kospi_idx.index <= end_ts]
+    benchmark_idx = get_index(cfg, start, end)
+    if benchmark_idx is not None and not benchmark_idx.empty:
+        benchmark_idx = benchmark_idx.loc[benchmark_idx.index <= end_ts]
 
     return {
         "config": cfg,
         "listing": listing,
         "sector_map": sector_map,
-        "kospi_index": kospi_idx,
+        "benchmark_index": benchmark_idx,
+        "kospi_index": benchmark_idx,  # 하위호환 alias
         "prepared": prepared,
         "leading": leading,
         "breakout_signals": bo_signals,

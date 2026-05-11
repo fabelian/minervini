@@ -10,14 +10,14 @@ import pandas as pd
 
 
 def plot_dashboard(daily: pd.DataFrame, bo_rolling: pd.DataFrame | None,
-                   factor_hits: pd.DataFrame | None, kospi_idx: pd.DataFrame | None,
-                   save_path: str | Path) -> str:
+                   factor_hits: pd.DataFrame | None, benchmark_idx: pd.DataFrame | None,
+                   save_path: str | Path, market: str = "KOSPI") -> str:
     fig, axes = plt.subplots(5, 1, figsize=(13, 18), sharex=True)
     ax_idx, ax_breadth, ax_nh, ax_bo, ax_hit = axes
 
-    if kospi_idx is not None and not kospi_idx.empty:
-        ax_idx.plot(kospi_idx.index, kospi_idx["Close"], color="black", lw=1.2, label="KOSPI")
-        ax_idx.set_ylabel("KOSPI")
+    if benchmark_idx is not None and not benchmark_idx.empty:
+        ax_idx.plot(benchmark_idx.index, benchmark_idx["Close"], color="black", lw=1.2, label=market)
+        ax_idx.set_ylabel(market)
         ax_idx.legend(loc="upper left")
         ax_idx.grid(alpha=0.3)
     else:
@@ -66,7 +66,7 @@ def plot_dashboard(daily: pd.DataFrame, bo_rolling: pd.DataFrame | None,
         ax_hit.text(0.5, 0.5, "시그널 부족", ha="center", va="center",
                     transform=ax_hit.transAxes)
 
-    fig.suptitle("KOSPI 모멘텀 / 브레이크아웃 Leading Indicator 대시보드",
+    fig.suptitle(f"{market} 모멘텀 / 브레이크아웃 Leading Indicator 대시보드",
                  fontsize=14, fontweight="bold")
     fig.tight_layout(rect=[0, 0, 1, 0.98])
 
