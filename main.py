@@ -124,11 +124,14 @@ def main() -> None:
         res["today_picks"].to_csv(out / "today_picks.csv", index=False)
 
     if not args.no_plot and not res["leading"].empty:
+        bench = res.get("benchmark_index")
+        if bench is None:
+            bench = res.get("kospi_index")
         png = plot_dashboard(
             res["leading"],
             res["breakout_rolling"],
             res["factor_hit_rate"],
-            res.get("benchmark_index") or res.get("kospi_index"),
+            bench,
             out / "dashboard.png",
             market=cfg.market,
         )

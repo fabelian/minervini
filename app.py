@@ -177,11 +177,14 @@ def _execute(job_id: str, max_stocks: int | None, as_of: str | None,
         res = run_pipeline(cfg, max_stocks=max_stocks, as_of=as_of)
         out_dir = OUTPUT_DIRS[market]
         if not res["leading"].empty:
+            bench = res.get("benchmark_index")
+            if bench is None:
+                bench = res.get("kospi_index")
             plot_dashboard(
                 res["leading"],
                 res.get("breakout_rolling"),
                 res.get("factor_hit_rate"),
-                res.get("benchmark_index") or res.get("kospi_index"),
+                bench,
                 out_dir / "dashboard.png",
                 market=market,
             )
