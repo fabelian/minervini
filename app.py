@@ -16,6 +16,7 @@ from config import Config
 from monitor import run as run_pipeline
 from plot import plot_dashboard
 from chat_agent import ChatAgent, DashboardContext
+from single_analysis import analyze_ticker
 
 
 app = FastAPI(title="KOSPI / NASDAQ Momentum Monitor", version="0.2.0")
@@ -275,6 +276,24 @@ def dashboard_png(market: str = "KOSPI"):
     if not p.exists():
         raise HTTPException(404, f"dashboard not generated yet for {m}")
     return FileResponse(p, media_type="image/png")
+
+
+# ---------- 단일 종목 분석 ----------
+
+class SingleRequest(BaseModel):
+    ticker: str
+    market: str | None = None
+    as_of: str | None = None
+
+
+@app.post("/api/single")
+def post_single(req: SingleRequest) -> dict:
+    try:
+        return analyze_ticker(req.ticker, req.market, req.as_of)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(500, f"{type(e).__name__}: {e}")
 
 
 # ---------- Chat ----------

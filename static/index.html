@@ -23,6 +23,27 @@
                       font-weight: 600; letter-spacing: 0.5px; }
   .market-tabs .tab.active { background: var(--accent); color: var(--bg); border-color: var(--accent); }
   .market-tabs .tab:hover:not(.active) { color: var(--text); }
+  /* 단일 종목 분석 패널 */
+  .single-section { margin: 16px 0; }
+  .card-subtitle { font-size: 11px; font-weight: 600; color: var(--muted);
+                   margin: 14px 0 6px; text-transform: uppercase; letter-spacing: 0.5px; }
+  .check-table { width: 100%; font-size: 13px; }
+  .check-table td { padding: 6px 8px; border-bottom: 1px solid #21262d; }
+  .check-table td:first-child { width: 28px; text-align: center; }
+  .check-table td:last-child { color: var(--muted); font-size: 12px; }
+  .check { font-weight: 700; }
+  .check.ok { color: var(--green); }
+  .check.fail { color: var(--red); }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 4px;
+           font-size: 11px; font-weight: 700; margin-left: 8px; letter-spacing: 0.5px; }
+  .badge.ok { background: rgba(63,185,80,0.18); color: var(--green); }
+  .badge.fail { background: rgba(248,81,73,0.18); color: var(--red); }
+  .flag-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+               gap: 8px; margin-top: 4px; }
+  .flag { padding: 8px 12px; border-radius: 6px; font-size: 12px;
+          border: 1px solid var(--border); color: var(--muted); }
+  .flag.on { background: rgba(63,185,80,0.12); color: var(--green);
+             border-color: rgba(63,185,80,0.4); font-weight: 600; }
   main { max-width: 1400px; margin: 0 auto; padding: 24px; }
   .controls { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 24px; }
   .controls input, .controls button {
@@ -100,41 +121,70 @@
   <h1>Momentum / Breakout Leading Indicator Monitor</h1>
   <div class="subtitle">Minervini-style 트렌드 템플릿 + IBD RS + 경로 의존적 hit rate</div>
   <div class="market-tabs" id="marketTabs">
-    <button class="tab active" data-market="KOSPI">KOSPI</button>
-    <button class="tab" data-market="NASDAQ">NASDAQ</button>
+    <button class="tab active" data-tab="KOSPI">KOSPI</button>
+    <button class="tab" data-tab="NASDAQ">NASDAQ</button>
+    <button class="tab" data-tab="SINGLE">종목 분석</button>
   </div>
 </header>
 <main>
-  <div class="controls">
-    <label>대상 종목 수
-      <input type="number" id="maxStocks" value="50" min="5" max="1000" style="width:80px;margin-left:6px;">
-    </label>
-    <label>기준일
-      <input type="date" id="asOf" style="margin-left:6px;">
-    </label>
-    <button id="runBtn">실행</button>
-    <button id="clearAsOfBtn" type="button" title="기준일을 비워 오늘 기준으로 실행">오늘</button>
-    <span class="status" id="status">준비됨</span>
+  <div id="marketView">
+    <div class="controls">
+      <label>대상 종목 수
+        <input type="number" id="maxStocks" value="50" min="5" max="1000" style="width:80px;margin-left:6px;">
+      </label>
+      <label>기준일
+        <input type="date" id="asOf" style="margin-left:6px;">
+      </label>
+      <button id="runBtn">실행</button>
+      <button id="clearAsOfBtn" type="button" title="기준일을 비워 오늘 기준으로 실행">오늘</button>
+      <span class="status" id="status">준비됨</span>
+    </div>
+
+    <div id="kpiArea"></div>
+
+    <div class="charts" id="chartsArea"></div>
+
+    <details open>
+      <summary>Sector rotation 랭킹 (BSR / MFHR by sector)</summary>
+      <div id="sectorArea"></div>
+    </details>
+
+    <details open>
+      <summary>오늘의 Quality 브레이크아웃 종목 (RS≥70)</summary>
+      <div id="picksArea"></div>
+    </details>
+
+    <details>
+      <summary>서버 사이드 Matplotlib 대시보드 PNG</summary>
+      <div id="pngArea"></div>
+    </details>
   </div>
 
-  <div id="kpiArea"></div>
+  <div id="singleView" style="display:none;">
+    <div class="controls">
+      <label>티커
+        <input type="text" id="sTicker" placeholder="005930 / AAPL" style="width:160px;margin-left:6px;">
+      </label>
+      <label>시장
+        <select id="sMarket" style="margin-left:6px;">
+          <option value="auto">자동 감지</option>
+          <option value="KOSPI">KOSPI</option>
+          <option value="NASDAQ">NASDAQ</option>
+        </select>
+      </label>
+      <label>기준일
+        <input type="date" id="sAsOf" style="margin-left:6px;">
+      </label>
+      <button id="sRunBtn">분석</button>
+      <span class="status" id="sStatus">티커를 입력하세요 (예: 005930, AAPL)</span>
+    </div>
 
-  <div class="charts" id="chartsArea"></div>
-
-  <details open>
-    <summary>Sector rotation 랭킹 (BSR / MFHR by sector)</summary>
-    <div id="sectorArea"></div>
-  </details>
-
-  <details open>
-    <summary>오늘의 Quality 브레이크아웃 종목 (RS≥70)</summary>
-    <div id="picksArea"></div>
-  </details>
-
-  <details>
-    <summary>서버 사이드 Matplotlib 대시보드 PNG</summary>
-    <div id="pngArea"></div>
-  </details>
+    <div id="sHeader"></div>
+    <div id="sScorecard"></div>
+    <div id="sBuySetup"></div>
+    <div id="sCharts" class="charts"></div>
+    <div id="sBreakouts"></div>
+  </div>
 </main>
 <div class="footer">github.com/fabelian/minervini · KOSPI 한정</div>
 
@@ -178,8 +228,10 @@ const LAYOUT = {
 };
 const PCFG = { displayModeBar: false, responsive: true };
 
-// 시장 탭 상태
+// 탭 / 시장 상태
+let currentTab = (localStorage.getItem('minervini.tab') || 'KOSPI').toUpperCase();
 let currentMarket = (localStorage.getItem('minervini.market') || 'KOSPI').toUpperCase();
+if (currentTab === 'KOSPI' || currentTab === 'NASDAQ') currentMarket = currentTab;
 
 const fmtPct = v => v == null || isNaN(v) ? '—' : (v * 100).toFixed(1) + '%';
 const fmtInt = v => v == null || isNaN(v) ? '—' : Math.round(v).toLocaleString();
@@ -437,25 +489,255 @@ async function loadLatest() {
   } catch (e) { /* ignore */ }
 }
 
-// 탭 전환
+// 탭 전환 (KOSPI / NASDAQ / SINGLE)
+function setTab(tab) {
+  if (!tab || tab === currentTab) return;
+  currentTab = tab;
+  localStorage.setItem('minervini.tab', tab);
+  document.querySelectorAll('.market-tabs .tab').forEach(b => {
+    b.classList.toggle('active', b.dataset.tab === currentTab);
+  });
+  const isSingle = (tab === 'SINGLE');
+  document.getElementById('marketView').style.display = isSingle ? 'none' : '';
+  document.getElementById('singleView').style.display = isSingle ? '' : 'none';
+  if (!isSingle) {
+    currentMarket = tab;
+    localStorage.setItem('minervini.market', tab);
+    loadLatest();
+  } else {
+    setTimeout(() => document.getElementById('sTicker').focus(), 50);
+  }
+}
 document.getElementById('marketTabs').addEventListener('click', (e) => {
   const t = e.target.closest('.tab');
   if (!t) return;
-  const m = t.dataset.market;
-  if (!m || m === currentMarket) return;
-  currentMarket = m;
-  localStorage.setItem('minervini.market', m);
-  document.querySelectorAll('.market-tabs .tab').forEach(b => {
-    b.classList.toggle('active', b.dataset.market === currentMarket);
-  });
-  loadLatest();
+  setTab(t.dataset.tab);
 });
 
-// 초기 탭 상태 반영 + 최초 로드
+// 초기 탭 상태 반영
 document.querySelectorAll('.market-tabs .tab').forEach(b => {
-  b.classList.toggle('active', b.dataset.market === currentMarket);
+  b.classList.toggle('active', b.dataset.tab === currentTab);
 });
-loadLatest();
+{
+  const isSingle = (currentTab === 'SINGLE');
+  document.getElementById('marketView').style.display = isSingle ? 'none' : '';
+  document.getElementById('singleView').style.display = isSingle ? '' : 'none';
+}
+if (currentTab !== 'SINGLE') loadLatest();
+
+// ─────────── 단일 종목 분석 ───────────
+async function runSingle() {
+  const ticker = document.getElementById('sTicker').value.trim();
+  const marketSel = document.getElementById('sMarket').value;
+  const asOf = document.getElementById('sAsOf').value || null;
+  const status = document.getElementById('sStatus');
+  const btn = document.getElementById('sRunBtn');
+  if (!ticker) { status.textContent = '티커를 입력하세요'; return; }
+  status.innerHTML = '<span class="spinner"></span> 분석 중…';
+  btn.disabled = true;
+  try {
+    const r = await fetch('/api/single', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ticker,
+        market: marketSel === 'auto' ? null : marketSel,
+        as_of: asOf,
+      }),
+    });
+    const j = await r.json();
+    if (!r.ok) {
+      status.textContent = '오류: ' + (j.detail || ('HTTP ' + r.status));
+      return;
+    }
+    renderSingle(j);
+    status.textContent = `${j.ticker} · ${j.market} · ${j.as_of} · ${j.n_bars} bars`;
+  } catch (e) {
+    status.textContent = '오류: ' + e.message;
+  } finally {
+    btn.disabled = false;
+  }
+}
+document.getElementById('sRunBtn').addEventListener('click', runSingle);
+document.getElementById('sTicker').addEventListener('keydown', e => {
+  if (e.key === 'Enter') runSingle();
+});
+
+function renderSingle(j) {
+  renderSingleHeader(j);
+  renderSingleScorecard(j);
+  renderSingleBuySetup(j);
+  renderSingleCharts(j);
+  renderSingleBreakouts(j);
+}
+
+function renderSingleHeader(j) {
+  const cur = j.current || {};
+  const items = [
+    { label: 'Ticker', value: j.ticker },
+    { label: 'Name', value: j.name || '—' },
+    { label: 'Market', value: j.market },
+    { label: 'Sector', value: j.sector || '—' },
+    { label: 'Close', value: fmtNum(cur.close, 2) },
+    { label: '% from 52w high', value: fmtPct(cur.pct_from_high),
+      cls: cur.pct_from_high == null ? '' : (cur.pct_from_high >= -0.05 ? 'green' : '') },
+    { label: 'ATR %', value: fmtPct(cur.atr_pct) },
+    { label: '12-1m momentum', value: fmtPct(cur.ret_12_1m),
+      cls: cur.ret_12_1m == null ? '' : (cur.ret_12_1m > 0 ? 'green' : 'red') },
+    { label: '3m return', value: fmtPct(cur.ret_3m),
+      cls: cur.ret_3m == null ? '' : (cur.ret_3m > 0 ? 'green' : 'red') },
+    { label: '6m return', value: fmtPct(cur.ret_6m),
+      cls: cur.ret_6m == null ? '' : (cur.ret_6m > 0 ? 'green' : 'red') },
+  ];
+  document.getElementById('sHeader').innerHTML = '<div class="kpi-grid">' +
+    items.map(it => `<div class="kpi"><div class="kpi-label">${it.label}</div><div class="kpi-value ${it.cls || ''}">${it.value}</div></div>`).join('') +
+    '</div>';
+}
+
+function renderSingleScorecard(j) {
+  const tt = j.trend_template || {};
+  const setup = j.setup_flags || {};
+  const flagItems = [
+    { k: 'template', label: 'Trend Template' },
+    { k: 'near_52w_high', label: '52주 신고가 근접' },
+    { k: 'new_52w_high', label: '52주 신고가 갱신' },
+    { k: 'vcp_compression', label: 'VCP 압축' },
+    { k: 'volume_surge', label: '거래량 급증' },
+    { k: 'pivot_breakout', label: 'Pivot 돌파' },
+    { k: 'quality_breakout', label: 'Quality 돌파' },
+  ];
+  const passBadge = tt.passes_all
+    ? '<span class="badge ok">PASS</span>'
+    : '<span class="badge fail">FAIL</span>';
+  let html = '<div class="card single-section">';
+  html += `<div class="card-title">트렌드 템플릿 — ${tt.pass_count ?? 0}/${tt.total ?? 8} 통과 ${passBadge}</div>`;
+  html += '<table class="check-table"><tbody>';
+  for (const c of tt.checks || []) {
+    const mark = c.ok ? '<span class="check ok">✓</span>' : '<span class="check fail">✗</span>';
+    html += `<tr><td>${mark}</td><td>${c.label}</td><td>${c.value || ''}</td></tr>`;
+  }
+  html += '</tbody></table>';
+  html += '<div class="card-subtitle">현재 셋업 플래그</div>';
+  html += '<div class="flag-grid">';
+  for (const f of flagItems) {
+    const ok = !!setup[f.k];
+    html += `<div class="flag ${ok ? 'on' : 'off'}">${ok ? '●' : '○'} ${f.label}</div>`;
+  }
+  html += '</div></div>';
+  document.getElementById('sScorecard').innerHTML = html;
+}
+
+function renderSingleBuySetup(j) {
+  const b = j.buy_setup || {};
+  const fmtP = v => v == null ? '—' : Number(v).toFixed(2);
+  const items = [
+    { label: 'Pivot (50d high)', value: fmtP(b.pivot_price) },
+    { label: 'Current close', value: fmtP(b.current_close) },
+    { label: 'Stop −8%', value: fmtP(b.stop_8pct), cls: 'red' },
+    { label: 'Stop (−2×ATR)', value: fmtP(b.stop_atr), cls: 'red' },
+    { label: 'Target +10%', value: fmtP(b.target_10pct), cls: 'green' },
+    { label: 'Target +20%', value: fmtP(b.target_20pct), cls: 'green' },
+  ];
+  document.getElementById('sBuySetup').innerHTML =
+    '<div class="card single-section"><div class="card-title">매매 셋업 (Minervini 룰)</div>' +
+    '<div class="kpi-grid">' +
+    items.map(it => `<div class="kpi"><div class="kpi-label">${it.label}</div><div class="kpi-value ${it.cls || ''}">${it.value}</div></div>`).join('') +
+    '</div></div>';
+}
+
+function renderSingleCharts(j) {
+  const area = document.getElementById('sCharts');
+  area.innerHTML = '';
+  const series = j.series || {};
+  const ohlc = series.ohlc || [];
+
+  const traces = [];
+  if (ohlc.length) {
+    traces.push({
+      x: ohlc.map(p => p.date),
+      open: ohlc.map(p => p.open),
+      high: ohlc.map(p => p.high),
+      low:  ohlc.map(p => p.low),
+      close: ohlc.map(p => p.close),
+      type: 'candlestick', name: j.ticker,
+      increasing: { line: { color: '#3fb950' } },
+      decreasing: { line: { color: '#f85149' } },
+    });
+  }
+  const overlays = [
+    ['sma50',  '#79c0ff', 'SMA50'],
+    ['sma150', '#56d4dd', 'SMA150'],
+    ['sma200', '#bc8cff', 'SMA200'],
+    ['high_52w', '#f78166', '52W high'],
+  ];
+  for (const [k, color, name] of overlays) {
+    const s = series[k] || [];
+    if (s.length) {
+      traces.push({
+        x: s.map(p => p.date), y: s.map(p => p.value),
+        type: 'scatter', mode: 'lines', name,
+        line: { color, width: 1.3, dash: k === 'high_52w' ? 'dot' : 'solid' },
+      });
+    }
+  }
+  const marks = j.breakout_marks || [];
+  if (marks.length) {
+    traces.push({
+      x: marks.map(m => m.date), y: marks.map(m => m.price),
+      type: 'scatter', mode: 'markers', name: '돌파 시그널',
+      marker: {
+        color: marks.map(m => m.type === 'quality' ? '#f0b400' : '#79c0ff'),
+        size: 11, symbol: 'triangle-up',
+        line: { color: '#161b22', width: 1 },
+      },
+    });
+  }
+  const c1 = chartCard('s-price', `${j.ticker} 가격 + SMA + 돌파 시그널`, true);
+  area.appendChild(c1);
+  Plotly.newPlot('s-price', traces, Object.assign({}, LAYOUT, {
+    xaxis: Object.assign({}, LAYOUT.xaxis, { rangeslider: { visible: false } }),
+    height: 380,
+  }), PCFG);
+
+  const v = series.volume || [];
+  if (v.length) {
+    const c2 = chartCard('s-vol', '거래량', true);
+    area.appendChild(c2);
+    Plotly.newPlot('s-vol', [{
+      x: v.map(p => p.date), y: v.map(p => p.value),
+      type: 'bar', name: 'Volume', marker: { color: '#30363d' },
+    }], Object.assign({}, LAYOUT, { height: 180 }), PCFG);
+  }
+}
+
+function renderSingleBreakouts(j) {
+  const bo = j.breakouts || [];
+  let html = '<div class="card single-section"><div class="card-title">최근 돌파 시그널 (forward return / hit 판정)</div>';
+  if (!bo.length) {
+    html += '<p class="empty">최근 돌파 시그널 없음.</p></div>';
+    document.getElementById('sBreakouts').innerHTML = html;
+    return;
+  }
+  const sCls = v => v == null ? '' : (v > 0 ? 'green' : (v < 0 ? 'red' : ''));
+  const sFmt = v => v == null ? '—' : (v * 100).toFixed(1) + '%';
+  html += '<table><thead><tr><th>Date</th><th>Type</th><th>Close</th><th>+5d</th><th>+20d</th><th>+60d</th><th>20d MDD</th><th>20d 판정</th></tr></thead><tbody>';
+  for (const b of bo) {
+    const hitBadge = b.hit_20d == null ? '—' :
+      (b.hit_20d ? '<span class="badge ok">HIT</span>' : '<span class="badge fail">MISS</span>');
+    html += `<tr>
+      <td>${b.date}</td>
+      <td>${b.type === 'quality' ? '<span class="green">quality</span>' : 'pivot'}</td>
+      <td>${b.close == null ? '—' : Number(b.close).toFixed(2)}</td>
+      <td class="${sCls(b.fwd_ret_5d)}">${sFmt(b.fwd_ret_5d)}</td>
+      <td class="${sCls(b.fwd_ret_20d)}">${sFmt(b.fwd_ret_20d)}</td>
+      <td class="${sCls(b.fwd_ret_60d)}">${sFmt(b.fwd_ret_60d)}</td>
+      <td class="${sCls(b.fwd_mdd_20d)}">${sFmt(b.fwd_mdd_20d)}</td>
+      <td>${hitBadge}</td>
+    </tr>`;
+  }
+  html += '</tbody></table></div>';
+  document.getElementById('sBreakouts').innerHTML = html;
+}
 
 // 우하단 챗 패널 — 드래그 이동 + 코너 리사이즈 + localStorage 영속화
 (() => {
