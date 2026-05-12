@@ -9,7 +9,7 @@ from typing import Any
 from uuid import uuid4
 
 import pandas as pd
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel
 
@@ -43,6 +43,23 @@ def _resolve_market(value: str | None) -> str:
     if m not in OUTPUT_DIRS:
         raise HTTPException(400, f"unsupported market: {m}")
     return m
+
+
+def _client_ip(request: Request | None) -> str | None:
+    """Railway/Reverse-proxy 뒤에서도 원본 IP를 가져온다.
+    X-Forwarded-For 첫 항목 → X-Real-IP → request.client.host 순.
+    """
+    if request is None:
+        return None
+    fwd = request.headers.get("x-forwarded-for")
+    if fwd:
+        return fwd.split(",")[0].strip() or None
+    real = request.headers.get("x-real-ip")
+    if real:
+        return real.strip() or None
+    if request.client and request.client.host:
+        return request.client.host
+    return None
 
 
 # ---------- 직렬화 ----------
@@ -172,7 +189,8 @@ def _now_iso() -> str:
 
 
 def _execute(job_id: str, max_stocks: int | None, as_of: str | None,
-             market: str, force_refresh: bool = False) -> None:
+             market: str, force_refresh: bool = False,
+             client_ip: str | None = None) -> None:
     started_at = datetime.now(timezone.utc)
     with JOBS_LOCK:
         JOBS[job_id]["status"] = "running"
@@ -242,7 +260,8 @@ def _execute(job_id: str, max_stocks: int | None, as_of: str | None,
             db.save(market, as_of, max_stocks, cfg_hash,
                     cfg_dict, summary, png_bytes,
                     int(summary.get("n_stocks") or 0),
-                    started_at, finished_at)
+                    started_at, finished_at,
+                    client_ip=client_ip)
         except Exception:
             pass
     except Exception as e:  # noqa: BLE001
@@ -275,8 +294,9 @@ def health() -> dict:
 
 
 @app.post("/api/run")
-def post_run(req: RunRequest) -> dict:
+def post_run(req: RunRequest, request: Request) -> dict:
     market = _resolve_market(req.market)
+    ip = _client_ip(request)
     job_id = uuid4().hex[:12]
     with JOBS_LOCK:
         JOBS[job_id] = {
@@ -285,10 +305,12 @@ def post_run(req: RunRequest) -> dict:
             "max_stocks": req.max_stocks,
             "as_of": req.as_of,
             "force_refresh": req.force_refresh,
+            "client_ip": ip,
             "queued_at": _now_iso(),
         }
     Thread(target=_execute,
-           args=(job_id, req.max_stocks, req.as_of, market, req.force_refresh),
+           args=(job_id, req.max_stocks, req.as_of, market,
+                 req.force_refresh, ip),
            daemon=True).start()
     return {"job_id": job_id, "status": "queued", "market": market,
             "cache_enabled": db.is_enabled()}

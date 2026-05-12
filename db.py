@@ -39,12 +39,16 @@ CREATE TABLE IF NOT EXISTS pipeline_runs (
     summary         JSONB        NOT NULL,
     dashboard_png   BYTEA,
     n_stocks        INTEGER,
+    client_ip       VARCHAR(64),
     started_at      TIMESTAMPTZ  NOT NULL,
     finished_at     TIMESTAMPTZ  NOT NULL,
     UNIQUE (market, as_of, max_stocks, config_hash)
 );
 CREATE INDEX IF NOT EXISTS idx_runs_market_asof
     ON pipeline_runs (market, as_of DESC);
+
+-- 기존 배포(컬럼 추가 전)에 대한 자동 마이그레이션
+ALTER TABLE pipeline_runs ADD COLUMN IF NOT EXISTS client_ip VARCHAR(64);
 """
 
 
@@ -137,7 +141,8 @@ def lookup(market: str, as_of: str | None, max_stocks: int | None,
 def save(market: str, as_of: str | None, max_stocks: int | None,
          cfg_hash: str, config_json: dict, summary: dict,
          dashboard_png: bytes | None, n_stocks: int,
-         started_at: datetime, finished_at: datetime) -> bool:
+         started_at: datetime, finished_at: datetime,
+         client_ip: str | None = None) -> bool:
     if not is_enabled():
         return False
     try:
@@ -146,20 +151,24 @@ def save(market: str, as_of: str | None, max_stocks: int | None,
                 """
                 INSERT INTO pipeline_runs
                   (market, as_of, max_stocks, config_hash, config_json,
-                   summary, dashboard_png, n_stocks, started_at, finished_at)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                   summary, dashboard_png, n_stocks, client_ip,
+                   started_at, finished_at)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                 ON CONFLICT (market, as_of, max_stocks, config_hash)
                 DO UPDATE SET
                   config_json   = EXCLUDED.config_json,
                   summary       = EXCLUDED.summary,
                   dashboard_png = EXCLUDED.dashboard_png,
                   n_stocks      = EXCLUDED.n_stocks,
+                  client_ip     = EXCLUDED.client_ip,
                   started_at    = EXCLUDED.started_at,
                   finished_at   = EXCLUDED.finished_at
                 """,
                 (market, _norm_date(as_of), _norm_max_stocks(max_stocks),
                  cfg_hash, Json(config_json), Json(summary),
-                 dashboard_png, n_stocks, started_at, finished_at),
+                 dashboard_png, n_stocks,
+                 (client_ip or None),
+                 started_at, finished_at),
             )
             conn.commit()
         return True
