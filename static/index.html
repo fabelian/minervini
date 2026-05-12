@@ -265,6 +265,23 @@ const fmtInt = v => v == null || isNaN(v) ? '—' : Math.round(v).toLocaleString
 const fmtNum = (v, d = 2) => v == null || isNaN(v) ? '—' : Number(v).toFixed(d);
 const colorPct = (v, hi = 0.55, lo = 0.4) => v == null ? '' : (v >= hi ? 'green' : (v <= lo ? 'red' : ''));
 
+// ISO/UTC 시각 문자열을 KST(Asia/Seoul) 로 변환해 표시. 날짜 전용 문자열은 그대로.
+function fmtKST(iso) {
+  if (!iso) return '—';
+  const s = String(iso);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  const d = new Date(s);
+  if (isNaN(d.getTime())) return s;
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Seoul',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+    hour12: false,
+  }).formatToParts(d);
+  const g = t => (parts.find(p => p.type === t) || {}).value || '';
+  return `${g('year')}-${g('month')}-${g('day')} ${g('hour')}:${g('minute')}:${g('second')}`;
+}
+
 function renderKPIs(s) {
   const l = s.latest || {};
   const items = [
@@ -447,7 +464,7 @@ async function poll(jobId, runBtn, statusEl) {
     const r = await fetch(`/api/status/${jobId}`);
     const j = await r.json();
     statusEl.innerHTML = `<span class="spinner"></span> 상태: ${j.status}` +
-      (j.started_at ? ` · 시작 ${j.started_at}` : '');
+      (j.started_at ? ` · 시작 ${fmtKST(j.started_at)}` : '');
     if (j.status === 'completed') {
       clearInterval(pollTimer); pollTimer = null;
       const rr = await fetch(`/api/result/${jobId}`);
@@ -772,7 +789,6 @@ function renderHistoryTable(runs) {
     el.innerHTML = '<p class="history-empty">저장된 분석이 없습니다.</p>';
     return;
   }
-  const fmtDt = v => v ? v.replace('T', ' ').slice(0, 19) : '—';
   // 각 fmt는 (값, 행) 시그니처로 호출. 행 단위 분기가 필요한 컬럼이 있음.
   const cols = [
     { k: 'id', t: 'ID' },
@@ -786,7 +802,7 @@ function renderHistoryTable(runs) {
     { k: 'n_stocks', t: '집계',
       fmt: (v, r) => r.kind === 'single' ? '—' : (v == null ? '—' : String(v)) },
     { k: 'client_ip', t: 'IP' },
-    { k: 'finished_at', t: '완료 시각', fmt: fmtDt },
+    { k: 'finished_at', t: '완료 시각 (KST)', fmt: fmtKST },
   ];
   let html = '<div style="overflow-x:auto;"><table style="min-width:780px;"><thead><tr>'
            + cols.map(c => `<th>${c.t}</th>`).join('') + '</tr></thead><tbody>';
