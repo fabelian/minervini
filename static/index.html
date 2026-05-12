@@ -85,17 +85,29 @@
              border-top-color: var(--accent); border-radius: 50%; animation: spin 1s linear infinite; vertical-align: -2px; }
   @keyframes spin { to { transform: rotate(360deg); } }
 
-  /* 우하단 플로팅 챗 패널 — 드래그 이동 + 코너 리사이즈 */
-  .chat-panel { position: fixed; bottom: 20px; right: 20px; width: 380px; height: 540px;
+  /* 우하단 플로팅 챗 패널 — Pointer Events 드래그 이동 + 코너 리사이즈, 닫힘 시 챗 아이콘 */
+  .chat-launcher { position: fixed; bottom: 20px; right: 20px;
+                   width: 56px; height: 56px; border-radius: 50%;
+                   background: var(--accent); color: var(--bg);
+                   border: none; cursor: pointer; font-size: 26px; line-height: 1;
+                   display: flex; align-items: center; justify-content: center;
+                   box-shadow: 0 6px 24px rgba(0,0,0,0.55);
+                   z-index: 1000; transition: transform 0.1s;
+                   -webkit-tap-highlight-color: transparent; }
+  .chat-launcher:hover { transform: scale(1.05); }
+  .chat-launcher:active { transform: scale(0.95); }
+  .chat-panel { position: fixed; bottom: 20px; right: 20px;
+                width: 380px; height: 540px;
                 background: var(--bg2); border: 1px solid var(--border); border-radius: 10px;
                 display: flex; flex-direction: column; box-shadow: 0 8px 32px rgba(0,0,0,0.55);
                 z-index: 1000; resize: both; overflow: hidden;
-                min-width: 300px; min-height: 220px; max-width: 95vw; max-height: 95vh; }
-  .chat-panel[data-open="false"] { height: 44px !important; min-height: 0; resize: none; overflow: hidden; }
+                min-width: 280px; min-height: 240px;
+                max-width: calc(100vw - 24px); max-height: calc(100vh - 24px); }
   .chat-panel.dragging { user-select: none; }
   .chat-panel::-webkit-resizer { background: linear-gradient(135deg, transparent 50%, var(--accent) 50%); }
   .chat-header { display: flex; gap: 8px; align-items: center; padding: 10px 12px;
-                 border-bottom: 1px solid var(--border); cursor: grab; user-select: none; touch-action: none; }
+                 border-bottom: 1px solid var(--border); cursor: grab; user-select: none;
+                 touch-action: none; }
   .chat-header.dragging { cursor: grabbing; }
   .chat-header > .chat-title { font-weight: 600; flex: 1; color: var(--accent); font-size: 13px; }
   .chat-header select { background: var(--bg); color: var(--text); border: 1px solid var(--border);
@@ -214,7 +226,9 @@
 </main>
 <div class="footer">github.com/fabelian/minervini · KOSPI 한정</div>
 
-<div class="chat-panel" id="chatPanel" data-open="false">
+<button class="chat-launcher" id="chatLauncher" title="AI 챗 열기" aria-label="AI 챗 열기">💬</button>
+
+<div class="chat-panel" id="chatPanel" data-open="false" style="display:none;">
   <div class="chat-header" id="chatHeader">
     <span class="chat-title">AI 챗</span>
     <select id="chatModel" title="모델 선택">
@@ -925,9 +939,10 @@ function renderSingleBreakouts(j) {
   document.getElementById('sBreakouts').innerHTML = html;
 }
 
-// 우하단 챗 패널 — 드래그 이동 + 코너 리사이즈 + localStorage 영속화
+// 우하단 챗 패널 — Pointer Events 드래그, 코너 리사이즈, 닫힘 시 챗 아이콘
 (() => {
   const panel = document.getElementById('chatPanel');
+  const launcher = document.getElementById('chatLauncher');
   const header = document.getElementById('chatHeader');
   const toggle = document.getElementById('chatToggle');
   const clearBtn = document.getElementById('chatClear');
@@ -938,7 +953,7 @@ function renderSingleBreakouts(j) {
   const modelSel = document.getElementById('chatModel');
   const history = [];
 
-  // ----- 위치/크기 영속화 -----
+  // ----- 위치/크기/오픈여부 영속화 -----
   const STORAGE_KEY = 'minervini.chatPanel.v1';
   const state = (() => {
     try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}') || {}; }
@@ -952,63 +967,80 @@ function renderSingleBreakouts(j) {
     const maxT = Math.max(0, window.innerHeight - h);
     return [Math.max(0, Math.min(maxL, left)), Math.max(0, Math.min(maxT, top))];
   }
-  // 첫 페인트 직후 top/left 앵커로 전환 — native resize가 좌상단 기준으로 자연스럽게 동작하도록.
-  // top 계산은 '펼친 상태' 높이를 기준으로 해야 펼쳤을 때 화면 안에 머문다.
-  const DEFAULT_W = 380, DEFAULT_OPEN_H = 540, MARGIN = 20;
+  // 초기 앵커는 펼친 높이를 기준으로 우하단 → top/left 좌표로 환산.
+  // 모바일 뷰포트 폭이 좁으면 패널 폭을 viewport 안으로 클램프.
+  const DEFAULT_W = 380, DEFAULT_OPEN_H = 540, MARGIN = 12;
   function applyInitialAnchor() {
-    const w = state.width || DEFAULT_W;
-    const openH = state.height || DEFAULT_OPEN_H;
-    let left = state.left != null ? state.left : Math.max(0, window.innerWidth - MARGIN - w);
+    const targetW = Math.min(state.width || DEFAULT_W, window.innerWidth - 2 * MARGIN);
+    const openH   = Math.min(state.height || DEFAULT_OPEN_H, window.innerHeight - 2 * MARGIN);
+    let left = state.left != null ? state.left : Math.max(0, window.innerWidth - MARGIN - targetW);
     let top  = state.top  != null ? state.top  : Math.max(0, window.innerHeight - MARGIN - openH);
-    [left, top] = clampRect(left, top, w, openH);
+    [left, top] = clampRect(left, top, targetW, openH);
     panel.style.right = 'auto';
     panel.style.bottom = 'auto';
     panel.style.left = left + 'px';
     panel.style.top = top + 'px';
-    if (state.width) panel.style.width = state.width + 'px';
+    panel.style.width = targetW + 'px';
   }
   requestAnimationFrame(applyInitialAnchor);
 
-  // ----- 펼침/접힘 (저장된 height 보존) -----
+  // ----- 패널 열기/닫기 (닫히면 launcher 아이콘만 노출) -----
   function setOpen(open) {
-    panel.dataset.open = String(!!open);
-    toggle.textContent = open ? '–' : '▢';
-    if (open) {
-      panel.style.height = (state.height || 540) + 'px';
-      setTimeout(() => input.focus(), 50);
-      // 위치/크기 변경으로 뷰포트 밖으로 밀려나면 클램프
+    const want = !!open;
+    state.opened = want;
+    saveState();
+    panel.dataset.open = String(want);
+    if (want) {
+      panel.style.display = 'flex';
+      launcher.style.display = 'none';
+      if (state.height) panel.style.height = Math.min(state.height, window.innerHeight - 2 * MARGIN) + 'px';
+      // 뷰포트 밖이면 클램프
       const r = panel.getBoundingClientRect();
       const [l, t] = clampRect(r.left, r.top, r.width, r.height);
       if (l !== r.left || t !== r.top) {
         panel.style.left = l + 'px'; panel.style.top = t + 'px';
         state.left = l; state.top = t; saveState();
       }
+      setTimeout(() => input.focus(), 50);
     } else {
-      panel.style.height = '';  // CSS의 !important 44px가 적용됨
+      panel.style.display = 'none';
+      launcher.style.display = 'flex';
     }
   }
-  setOpen(false);
+  // 초기 상태 — 마지막 세션이 열려있었던 경우만 자동 오픈, 기본은 launcher.
+  setOpen(state.opened === true);
 
-  // ----- 드래그 이동 (헤더) -----
-  let drag = null;   // { sx, sy, l, t, moved }
-  let suppressClick = false;
+  // 닫기 버튼 (헤더의 토글 자리)
+  toggle.textContent = '—';
+  toggle.title = '최소화';
+  toggle.addEventListener('click', e => {
+    e.stopPropagation();
+    setOpen(false);
+  });
+
+  // 런처 클릭 → 패널 열기
+  launcher.addEventListener('click', () => setOpen(true));
+
+  // ----- 드래그 이동 (헤더 · Pointer Events: 마우스 + 터치 통합) -----
+  let drag = null;   // { sx, sy, l, t, moved, pointerId }
   function isDragHandle(el) {
-    // 헤더 자체 또는 타이틀만 드래그 핸들로. 셀렉트/버튼은 본연 동작 유지.
+    if (!el) return false;
     if (el === modelSel || el === clearBtn || el === toggle) return false;
-    if (el.tagName === 'OPTION') return false;
-    return el === header || header.contains(el) && el.classList.contains('chat-title');
+    if (el.tagName === 'OPTION' || el.tagName === 'SELECT' || el.tagName === 'BUTTON') return false;
+    return el === header || (header.contains(el) && el.classList && el.classList.contains('chat-title'));
   }
-  header.addEventListener('mousedown', e => {
-    if (e.button !== 0) return;
+  header.addEventListener('pointerdown', e => {
+    if (e.button !== undefined && e.button !== 0) return;
     if (!isDragHandle(e.target)) return;
     const r = panel.getBoundingClientRect();
-    drag = { sx: e.clientX, sy: e.clientY, l: r.left, t: r.top, moved: false };
+    drag = { sx: e.clientX, sy: e.clientY, l: r.left, t: r.top, moved: false, pointerId: e.pointerId };
     header.classList.add('dragging');
     panel.classList.add('dragging');
+    try { header.setPointerCapture(e.pointerId); } catch {}
     e.preventDefault();
   });
-  window.addEventListener('mousemove', e => {
-    if (!drag) return;
+  header.addEventListener('pointermove', e => {
+    if (!drag || e.pointerId !== drag.pointerId) return;
     const dx = e.clientX - drag.sx;
     const dy = e.clientY - drag.sy;
     if (!drag.moved && Math.abs(dx) + Math.abs(dy) < 4) return;
@@ -1018,43 +1050,39 @@ function renderSingleBreakouts(j) {
     panel.style.left = l + 'px';
     panel.style.top = t + 'px';
   });
-  window.addEventListener('mouseup', () => {
+  function endDrag(e) {
     if (!drag) return;
+    if (e && drag.pointerId !== e.pointerId) return;
     if (drag.moved) {
       state.left = parseFloat(panel.style.left);
-      state.top = parseFloat(panel.style.top);
+      state.top  = parseFloat(panel.style.top);
       saveState();
-      suppressClick = true;
-      setTimeout(() => { suppressClick = false; }, 60);
     }
     drag = null;
     header.classList.remove('dragging');
     panel.classList.remove('dragging');
-  });
+  }
+  header.addEventListener('pointerup', endDrag);
+  header.addEventListener('pointercancel', endDrag);
 
-  // ----- 클릭(헤더): 토글 — 드래그한 경우엔 무시 -----
-  header.addEventListener('click', e => {
-    if (suppressClick) return;
-    if (e.target === modelSel || e.target === clearBtn || e.target === toggle) return;
-    setOpen(panel.dataset.open !== 'true');
-  });
-
-  // ----- 리사이즈 관찰: 펼친 상태의 width/height 저장 -----
+  // ----- 리사이즈 관찰: 펼친 상태의 width/height만 저장 (닫힘 상태의 0×0 무시) -----
   const ro = new ResizeObserver(entries => {
-    if (panel.dataset.open !== 'true') return;
+    if (panel.dataset.open !== 'true' || panel.style.display === 'none') return;
     for (const ent of entries) {
       const w = Math.round(ent.contentRect.width);
       const h = Math.round(ent.contentRect.height);
       if (w >= 280) state.width = w;
-      if (h >= 200) state.height = h;
+      if (h >= 240) state.height = h;
     }
     saveState();
   });
   ro.observe(panel);
 
-  // ----- 뷰포트 리사이즈 시 화면 안으로 클램프 -----
+  // ----- 뷰포트 리사이즈(또는 화면 회전) 시 패널을 화면 안으로 클램프 -----
   window.addEventListener('resize', () => {
+    if (panel.style.display === 'none') return;
     const r = panel.getBoundingClientRect();
+    if (r.width <= 0 || r.height <= 0) return;
     const [l, t] = clampRect(r.left, r.top, r.width, r.height);
     if (l !== r.left || t !== r.top) {
       panel.style.left = l + 'px';
