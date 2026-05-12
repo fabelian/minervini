@@ -137,6 +137,9 @@
       </label>
       <button id="runBtn">실행</button>
       <button id="clearAsOfBtn" type="button" title="기준일을 비워 오늘 기준으로 실행">오늘</button>
+      <label style="display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);cursor:pointer;">
+        <input type="checkbox" id="forceRefresh"> 캐시 무시
+      </label>
       <span class="status" id="status">준비됨</span>
     </div>
 
@@ -426,7 +429,8 @@ async function poll(jobId, runBtn, statusEl) {
       const rr = await fetch(`/api/result/${jobId}`);
       const summary = await rr.json();
       renderResult(summary);
-      statusEl.textContent = `완료 · job ${jobId} · ${summary.as_of || ''}`;
+      const srcTag = j.source === 'cache' ? ' · 💾 캐시' : (j.source === 'fresh' ? ' · 🆕 신규' : '');
+      statusEl.textContent = `완료 · job ${jobId} · ${summary.as_of || ''}${srcTag}`;
       runBtn.disabled = false;
     } else if (j.status === 'failed') {
       clearInterval(pollTimer); pollTimer = null;
@@ -450,10 +454,11 @@ document.getElementById('runBtn').addEventListener('click', async () => {
   btn.disabled = true;
   status.innerHTML = '<span class="spinner"></span> 제출 중…';
   try {
+    const force_refresh = document.getElementById('forceRefresh').checked;
     const r = await fetch('/api/run', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ max_stocks, as_of, market: currentMarket }),
+      body: JSON.stringify({ max_stocks, as_of, market: currentMarket, force_refresh }),
     });
     const j = await r.json();
     const tag = as_of ? ` · as-of ${as_of}` : '';
@@ -475,7 +480,8 @@ async function loadLatest() {
       const j = await r.json();
       if (j.summary) {
         renderResult(j.summary);
-        status.textContent = `${currentMarket} · 이전 결과 · job ${j.job_id} · ${j.summary.as_of || ''}`;
+        const srcTag = j.source === 'cache' ? ' · 💾 캐시' : (j.source === 'fresh' ? ' · 🆕 신규' : '');
+        status.textContent = `${currentMarket} · 이전 결과 · job ${j.job_id} · ${j.summary.as_of || ''}${srcTag}`;
         return;
       }
     }
