@@ -138,6 +138,92 @@ def lookup(market: str, as_of: str | None, max_stocks: int | None,
         return None
 
 
+def list_runs(market: str | None = None, limit: int = 50) -> list[dict]:
+    """과거 분석 메타데이터 (가벼운 컬럼만, summary/PNG 제외)를 최신순 반환."""
+    if not is_enabled():
+        return []
+    try:
+        with _pool.connection() as conn, conn.cursor() as cur:
+            if market:
+                cur.execute(
+                    """
+                    SELECT id, market, as_of, max_stocks, n_stocks, client_ip,
+                           finished_at, (dashboard_png IS NOT NULL) AS has_png
+                    FROM pipeline_runs
+                    WHERE market = %s
+                    ORDER BY finished_at DESC
+                    LIMIT %s
+                    """,
+                    (market, limit),
+                )
+            else:
+                cur.execute(
+                    """
+                    SELECT id, market, as_of, max_stocks, n_stocks, client_ip,
+                           finished_at, (dashboard_png IS NOT NULL) AS has_png
+                    FROM pipeline_runs
+                    ORDER BY finished_at DESC
+                    LIMIT %s
+                    """,
+                    (limit,),
+                )
+            rows = cur.fetchall()
+            return [{
+                "id": r[0], "market": r[1],
+                "as_of": r[2].isoformat() if r[2] else None,
+                "max_stocks": r[3], "n_stocks": r[4],
+                "client_ip": r[5],
+                "finished_at": r[6].isoformat() if r[6] else None,
+                "has_png": bool(r[7]),
+            } for r in rows]
+    except Exception as e:  # noqa: BLE001
+        log.warning("db list_runs failed: %s", e)
+        return []
+
+
+def get_run(run_id: int, with_png: bool = True) -> dict | None:
+    """단건 조회. with_png=False면 BYTEA를 빼고 가져온다."""
+    if not is_enabled():
+        return None
+    try:
+        with _pool.connection() as conn, conn.cursor() as cur:
+            if with_png:
+                cur.execute(
+                    """
+                    SELECT id, market, as_of, max_stocks, n_stocks, client_ip,
+                           started_at, finished_at, config_json, summary, dashboard_png
+                    FROM pipeline_runs WHERE id = %s
+                    """,
+                    (run_id,),
+                )
+            else:
+                cur.execute(
+                    """
+                    SELECT id, market, as_of, max_stocks, n_stocks, client_ip,
+                           started_at, finished_at, config_json, summary, NULL
+                    FROM pipeline_runs WHERE id = %s
+                    """,
+                    (run_id,),
+                )
+            r = cur.fetchone()
+            if not r:
+                return None
+            return {
+                "id": r[0], "market": r[1],
+                "as_of": r[2].isoformat() if r[2] else None,
+                "max_stocks": r[3], "n_stocks": r[4],
+                "client_ip": r[5],
+                "started_at": r[6].isoformat() if r[6] else None,
+                "finished_at": r[7].isoformat() if r[7] else None,
+                "config_json": r[8],
+                "summary": r[9],
+                "dashboard_png": bytes(r[10]) if r[10] is not None else None,
+            }
+    except Exception as e:  # noqa: BLE001
+        log.warning("db get_run failed: %s", e)
+        return None
+
+
 def save(market: str, as_of: str | None, max_stocks: int | None,
          cfg_hash: str, config_json: dict, summary: dict,
          dashboard_png: bytes | None, n_stocks: int,

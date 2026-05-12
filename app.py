@@ -10,7 +10,7 @@ from uuid import uuid4
 
 import pandas as pd
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, Response
 from pydantic import BaseModel
 
 import db
@@ -352,6 +352,32 @@ def dashboard_png(market: str = "KOSPI"):
     if not p.exists():
         raise HTTPException(404, f"dashboard not generated yet for {m}")
     return FileResponse(p, media_type="image/png")
+
+
+# ---------- 분석 히스토리 ----------
+
+@app.get("/api/history")
+def history(market: str | None = None, limit: int = 50) -> dict:
+    m = _resolve_market(market) if market else None
+    limit = max(1, min(int(limit or 50), 500))
+    return {"enabled": db.is_enabled(), "runs": db.list_runs(m, limit)}
+
+
+@app.get("/api/history/{run_id}")
+def history_get(run_id: int) -> dict:
+    rec = db.get_run(int(run_id), with_png=False)
+    if rec is None:
+        raise HTTPException(404, "run not found")
+    rec.pop("dashboard_png", None)
+    return rec
+
+
+@app.get("/api/history/{run_id}/dashboard.png")
+def history_png(run_id: int):
+    rec = db.get_run(int(run_id), with_png=True)
+    if rec is None or not rec.get("dashboard_png"):
+        raise HTTPException(404, "png not available")
+    return Response(content=rec["dashboard_png"], media_type="image/png")
 
 
 # ---------- 단일 종목 분석 ----------

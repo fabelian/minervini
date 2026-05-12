@@ -44,6 +44,10 @@
           border: 1px solid var(--border); color: var(--muted); }
   .flag.on { background: rgba(63,185,80,0.12); color: var(--green);
              border-color: rgba(63,185,80,0.4); font-weight: 600; }
+  /* 기록 탭 */
+  .history-row { cursor: pointer; }
+  .history-row:hover td { background: #1a2230; }
+  .history-empty { color: var(--muted); padding: 24px; text-align: center; font-size: 13px; }
   main { max-width: 1400px; margin: 0 auto; padding: 24px; }
   .controls { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 24px; }
   .controls input, .controls button {
@@ -124,6 +128,7 @@
     <button class="tab active" data-tab="KOSPI">KOSPI</button>
     <button class="tab" data-tab="NASDAQ">NASDAQ</button>
     <button class="tab" data-tab="SINGLE">종목 분석</button>
+    <button class="tab" data-tab="HISTORY">기록</button>
   </div>
 </header>
 <main>
@@ -187,6 +192,24 @@
     <div id="sBuySetup"></div>
     <div id="sCharts" class="charts"></div>
     <div id="sBreakouts"></div>
+  </div>
+
+  <div id="historyView" style="display:none;">
+    <div class="controls">
+      <label>시장 필터
+        <select id="hMarketFilter" style="margin-left:6px;">
+          <option value="">전체</option>
+          <option value="KOSPI">KOSPI</option>
+          <option value="NASDAQ">NASDAQ</option>
+        </select>
+      </label>
+      <label>최대 행 수
+        <input type="number" id="hLimit" value="50" min="1" max="500" style="width:80px;margin-left:6px;">
+      </label>
+      <button id="hRefreshBtn">새로고침</button>
+      <span class="status" id="hStatus">불러오는 중…</span>
+    </div>
+    <div id="hTableArea"></div>
   </div>
 </main>
 <div class="footer">github.com/fabelian/minervini · KOSPI 한정</div>
@@ -496,23 +519,30 @@ async function loadLatest() {
   } catch (e) { /* ignore */ }
 }
 
-// 탭 전환 (KOSPI / NASDAQ / SINGLE)
+// 탭 전환 (KOSPI / NASDAQ / SINGLE / HISTORY)
+function applyTabVisibility(tab) {
+  const isSingle  = (tab === 'SINGLE');
+  const isHistory = (tab === 'HISTORY');
+  document.getElementById('marketView').style.display  = (isSingle || isHistory) ? 'none' : '';
+  document.getElementById('singleView').style.display  = isSingle  ? '' : 'none';
+  document.getElementById('historyView').style.display = isHistory ? '' : 'none';
+  document.querySelectorAll('.market-tabs .tab').forEach(b => {
+    b.classList.toggle('active', b.dataset.tab === tab);
+  });
+}
 function setTab(tab) {
   if (!tab || tab === currentTab) return;
   currentTab = tab;
   localStorage.setItem('minervini.tab', tab);
-  document.querySelectorAll('.market-tabs .tab').forEach(b => {
-    b.classList.toggle('active', b.dataset.tab === currentTab);
-  });
-  const isSingle = (tab === 'SINGLE');
-  document.getElementById('marketView').style.display = isSingle ? 'none' : '';
-  document.getElementById('singleView').style.display = isSingle ? '' : 'none';
-  if (!isSingle) {
+  applyTabVisibility(tab);
+  if (tab === 'HISTORY') {
+    loadHistory();
+  } else if (tab === 'SINGLE') {
+    setTimeout(() => document.getElementById('sTicker').focus(), 50);
+  } else {
     currentMarket = tab;
     localStorage.setItem('minervini.market', tab);
     loadLatest();
-  } else {
-    setTimeout(() => document.getElementById('sTicker').focus(), 50);
   }
 }
 document.getElementById('marketTabs').addEventListener('click', (e) => {
@@ -522,15 +552,9 @@ document.getElementById('marketTabs').addEventListener('click', (e) => {
 });
 
 // 초기 탭 상태 반영
-document.querySelectorAll('.market-tabs .tab').forEach(b => {
-  b.classList.toggle('active', b.dataset.tab === currentTab);
-});
-{
-  const isSingle = (currentTab === 'SINGLE');
-  document.getElementById('marketView').style.display = isSingle ? 'none' : '';
-  document.getElementById('singleView').style.display = isSingle ? '' : 'none';
-}
-if (currentTab !== 'SINGLE') loadLatest();
+applyTabVisibility(currentTab);
+if (currentTab === 'HISTORY') loadHistory();
+else if (currentTab !== 'SINGLE') loadLatest();
 
 // ─────────── 단일 종목 분석 ───────────
 async function runSingle() {
@@ -716,6 +740,103 @@ function renderSingleCharts(j) {
     }], Object.assign({}, LAYOUT, { height: 180 }), PCFG);
   }
 }
+
+// ─────────── 분석 히스토리 ───────────
+async function loadHistory() {
+  const status = document.getElementById('hStatus');
+  const market = document.getElementById('hMarketFilter').value;
+  const limit = parseInt(document.getElementById('hLimit').value) || 50;
+  status.innerHTML = '<span class="spinner"></span> 불러오는 중…';
+  try {
+    const qs = new URLSearchParams();
+    if (market) qs.set('market', market);
+    qs.set('limit', String(limit));
+    const r = await fetch('/api/history?' + qs.toString());
+    const j = await r.json();
+    if (!r.ok) {
+      status.textContent = '오류: ' + (j.detail || ('HTTP ' + r.status));
+      renderHistoryTable([]);
+      return;
+    }
+    renderHistoryTable(j.runs || []);
+    const note = j.enabled ? '' : ' · DB 비활성';
+    status.textContent = `${(j.runs || []).length}건${note}`;
+  } catch (e) {
+    status.textContent = '오류: ' + e.message;
+  }
+}
+
+function renderHistoryTable(runs) {
+  const el = document.getElementById('hTableArea');
+  if (!runs || runs.length === 0) {
+    el.innerHTML = '<p class="history-empty">저장된 분석이 없습니다.</p>';
+    return;
+  }
+  const fmtDt = v => v ? v.replace('T', ' ').slice(0, 19) : '—';
+  const fmtMax = v => (v == null || v === -1) ? '전체' : String(v);
+  const cols = [
+    { k: 'id', t: 'ID' },
+    { k: 'market', t: 'Market' },
+    { k: 'as_of', t: 'As-of' },
+    { k: 'max_stocks', t: '최대 종목', fmt: fmtMax },
+    { k: 'n_stocks', t: '집계' },
+    { k: 'client_ip', t: 'IP' },
+    { k: 'finished_at', t: '완료 시각', fmt: fmtDt },
+    { k: 'has_png', t: 'PNG', fmt: v => v ? '✓' : '—' },
+  ];
+  let html = '<table><thead><tr>' + cols.map(c => `<th>${c.t}</th>`).join('') + '</tr></thead><tbody>';
+  for (const r of runs) {
+    html += `<tr class="history-row" data-id="${r.id}" data-market="${r.market}">`;
+    for (const c of cols) {
+      const v = r[c.k];
+      const cell = (v == null) ? '—' : (c.fmt ? c.fmt(v) : String(v));
+      html += `<td>${cell}</td>`;
+    }
+    html += '</tr>';
+  }
+  html += '</tbody></table>';
+  el.innerHTML = html;
+  el.querySelectorAll('.history-row').forEach(tr => {
+    tr.addEventListener('click', () => openHistoricRun(
+      parseInt(tr.dataset.id, 10), tr.dataset.market));
+  });
+}
+
+async function openHistoricRun(runId, market) {
+  const hStatus = document.getElementById('hStatus');
+  hStatus.innerHTML = '<span class="spinner"></span> 데이터 조회 중…';
+  try {
+    const r = await fetch(`/api/history/${runId}`);
+    const j = await r.json();
+    if (!r.ok) {
+      hStatus.textContent = '오류: ' + (j.detail || ('HTTP ' + r.status));
+      return;
+    }
+    // 해당 시장의 대시보드 뷰로 전환 (loadLatest는 트리거하지 않음)
+    currentTab = market;
+    currentMarket = market;
+    localStorage.setItem('minervini.tab', market);
+    localStorage.setItem('minervini.market', market);
+    applyTabVisibility(market);
+    renderResult(j.summary || {});
+    // PNG는 DB에 저장된 것으로 덮어쓰기
+    document.getElementById('pngArea').innerHTML =
+      `<img class="png-img" src="/api/history/${runId}/dashboard.png?t=${Date.now()}" onerror="this.replaceWith(Object.assign(document.createElement('p'),{className:'empty',textContent:'PNG 없음'}))">`;
+    // 상단 상태 라인에 히스토리 컨텍스트 표시
+    const statusEl = document.getElementById('status');
+    if (statusEl) {
+      const ip = j.client_ip ? ` · IP=${j.client_ip}` : '';
+      statusEl.textContent = `💾 히스토리 #${runId} · ${j.market} · ${j.as_of}${ip}`;
+    }
+    hStatus.textContent = `#${runId} 표시 중`;
+  } catch (e) {
+    hStatus.textContent = '오류: ' + e.message;
+  }
+}
+
+document.getElementById('hRefreshBtn').addEventListener('click', loadHistory);
+document.getElementById('hMarketFilter').addEventListener('change', loadHistory);
+document.getElementById('hLimit').addEventListener('change', loadHistory);
 
 function renderSingleBreakouts(j) {
   const bo = j.breakouts || [];
