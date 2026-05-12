@@ -372,6 +372,14 @@ def history_get(run_id: int) -> dict:
     return rec
 
 
+@app.get("/api/history/single/{run_id}")
+def history_single_get(run_id: int) -> dict:
+    rec = db.get_single(int(run_id))
+    if rec is None:
+        raise HTTPException(404, "single run not found")
+    return rec
+
+
 @app.get("/api/history/{run_id}/dashboard.png")
 def history_png(run_id: int):
     rec = db.get_run(int(run_id), with_png=True)
@@ -389,9 +397,25 @@ class SingleRequest(BaseModel):
 
 
 @app.post("/api/single")
-def post_single(req: SingleRequest) -> dict:
+def post_single(req: SingleRequest, request: Request) -> dict:
+    started_at = datetime.now(timezone.utc)
     try:
-        return analyze_ticker(req.ticker, req.market, req.as_of)
+        result = analyze_ticker(req.ticker, req.market, req.as_of)
+        finished_at = datetime.now(timezone.utc)
+        # DB 저장 (best-effort)
+        try:
+            db.save_single(
+                ticker=str(result.get("ticker") or req.ticker),
+                market=str(result.get("market") or "KOSPI"),
+                as_of=req.as_of,
+                result=result,
+                client_ip=_client_ip(request),
+                started_at=started_at,
+                finished_at=finished_at,
+            )
+        except Exception:
+            pass
+        return result
     except ValueError as e:
         raise HTTPException(400, str(e))
     except Exception as e:  # noqa: BLE001

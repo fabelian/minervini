@@ -773,24 +773,31 @@ function renderHistoryTable(runs) {
     return;
   }
   const fmtDt = v => v ? v.replace('T', ' ').slice(0, 19) : '—';
-  const fmtMax = v => (v == null || v === -1) ? '전체' : String(v);
+  // 각 fmt는 (값, 행) 시그니처로 호출. 행 단위 분기가 필요한 컬럼이 있음.
   const cols = [
     { k: 'id', t: 'ID' },
+    { k: 'kind', t: 'Type', fmt: v => v === 'single' ? '단일' : '시장' },
     { k: 'market', t: 'Market' },
+    { k: '_target', t: '대상',
+      fmt: (_, r) => r.kind === 'single'
+        ? (r.ticker || '—')
+        : ((r.max_stocks == null || r.max_stocks === -1) ? '전체' : String(r.max_stocks)) },
     { k: 'as_of', t: 'As-of' },
-    { k: 'max_stocks', t: '최대 종목', fmt: fmtMax },
-    { k: 'n_stocks', t: '집계' },
+    { k: 'n_stocks', t: '집계',
+      fmt: (v, r) => r.kind === 'single' ? '—' : (v == null ? '—' : String(v)) },
     { k: 'client_ip', t: 'IP' },
     { k: 'finished_at', t: '완료 시각', fmt: fmtDt },
-    { k: 'has_png', t: 'PNG', fmt: v => v ? '✓' : '—' },
   ];
-  let html = '<div style="overflow-x:auto;"><table style="min-width:760px;"><thead><tr>'
+  let html = '<div style="overflow-x:auto;"><table style="min-width:780px;"><thead><tr>'
            + cols.map(c => `<th>${c.t}</th>`).join('') + '</tr></thead><tbody>';
   for (const r of runs) {
-    html += `<tr class="history-row" data-id="${r.id}" data-market="${r.market}">`;
+    html += `<tr class="history-row" data-id="${r.id}" data-kind="${r.kind}" data-market="${r.market}">`;
     for (const c of cols) {
       const v = r[c.k];
-      const cell = (v == null) ? '—' : (c.fmt ? c.fmt(v) : String(v));
+      let cell;
+      if (c.fmt) cell = c.fmt(v, r);
+      else cell = (v == null ? '—' : String(v));
+      if (cell == null || cell === '') cell = '—';
       html += `<td>${cell}</td>`;
     }
     html += '</tr>';
@@ -798,8 +805,13 @@ function renderHistoryTable(runs) {
   html += '</tbody></table></div>';
   el.innerHTML = html;
   el.querySelectorAll('.history-row').forEach(tr => {
-    tr.addEventListener('click', () => openHistoricRun(
-      parseInt(tr.dataset.id, 10), tr.dataset.market));
+    const id = parseInt(tr.dataset.id, 10);
+    const kind = tr.dataset.kind;
+    const market = tr.dataset.market;
+    tr.addEventListener('click', () => {
+      if (kind === 'single') openHistoricSingle(id);
+      else openHistoricRun(id, market);
+    });
   });
 }
 
@@ -830,6 +842,35 @@ async function openHistoricRun(runId, market) {
       statusEl.textContent = `💾 히스토리 #${runId} · ${j.market} · ${j.as_of}${ip}`;
     }
     hStatus.textContent = `#${runId} 표시 중`;
+  } catch (e) {
+    hStatus.textContent = '오류: ' + e.message;
+  }
+}
+
+async function openHistoricSingle(runId) {
+  const hStatus = document.getElementById('hStatus');
+  hStatus.innerHTML = '<span class="spinner"></span> 단일 종목 데이터 조회 중…';
+  try {
+    const r = await fetch(`/api/history/single/${runId}`);
+    const j = await r.json();
+    if (!r.ok) {
+      hStatus.textContent = '오류: ' + (j.detail || ('HTTP ' + r.status));
+      return;
+    }
+    const result = j.result || {};
+    // SINGLE 탭으로 전환 (loadLatest 트리거 안 함)
+    currentTab = 'SINGLE';
+    localStorage.setItem('minervini.tab', 'SINGLE');
+    applyTabVisibility('SINGLE');
+    // 입력 필드를 저장된 컨텍스트로 채워서 사용자가 무엇을 보는지 알게
+    document.getElementById('sTicker').value = result.ticker || j.ticker || '';
+    document.getElementById('sMarket').value = result.market || j.market || 'auto';
+    if (j.as_of) document.getElementById('sAsOf').value = j.as_of;
+    renderSingle(result);
+    const ip = j.client_ip ? ` · IP=${j.client_ip}` : '';
+    document.getElementById('sStatus').textContent =
+      `💾 히스토리 #${j.id} · ${j.market} ${j.ticker} · ${j.as_of}${ip}`;
+    hStatus.textContent = `단일 #${runId} 표시 중`;
   } catch (e) {
     hStatus.textContent = '오류: ' + e.message;
   }

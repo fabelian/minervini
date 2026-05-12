@@ -49,6 +49,20 @@ CREATE INDEX IF NOT EXISTS idx_runs_market_asof
 
 -- 기존 배포(컬럼 추가 전)에 대한 자동 마이그레이션
 ALTER TABLE pipeline_runs ADD COLUMN IF NOT EXISTS client_ip VARCHAR(64);
+
+CREATE TABLE IF NOT EXISTS single_runs (
+    id              BIGSERIAL PRIMARY KEY,
+    ticker          VARCHAR(32)  NOT NULL,
+    market          VARCHAR(16)  NOT NULL,
+    as_of           DATE         NOT NULL,
+    result          JSONB        NOT NULL,
+    client_ip       VARCHAR(64),
+    started_at      TIMESTAMPTZ  NOT NULL,
+    finished_at     TIMESTAMPTZ  NOT NULL,
+    UNIQUE (ticker, market, as_of)
+);
+CREATE INDEX IF NOT EXISTS idx_single_market_asof
+    ON single_runs (market, as_of DESC);
 """
 
 
@@ -139,7 +153,8 @@ def lookup(market: str, as_of: str | None, max_stocks: int | None,
 
 
 def list_runs(market: str | None = None, limit: int = 50) -> list[dict]:
-    """과거 분석 메타데이터 (가벼운 컬럼만, summary/PNG 제외)를 최신순 반환."""
+    """파이프라인 + 단일 종목 분석 기록을 UNION ALL로 합쳐 최신순 반환.
+    각 행에 `kind` 필드(pipeline | single)로 출처를 표시한다."""
     if not is_enabled():
         return []
     try:
@@ -147,21 +162,34 @@ def list_runs(market: str | None = None, limit: int = 50) -> list[dict]:
             if market:
                 cur.execute(
                     """
-                    SELECT id, market, as_of, max_stocks, n_stocks, client_ip,
+                    SELECT 'pipeline' AS kind, id, market, as_of, max_stocks,
+                           NULL::VARCHAR AS ticker, n_stocks, client_ip,
                            finished_at, (dashboard_png IS NOT NULL) AS has_png
                     FROM pipeline_runs
+                    WHERE market = %s
+                    UNION ALL
+                    SELECT 'single' AS kind, id, market, as_of, NULL::INTEGER AS max_stocks,
+                           ticker, NULL::INTEGER AS n_stocks, client_ip,
+                           finished_at, FALSE AS has_png
+                    FROM single_runs
                     WHERE market = %s
                     ORDER BY finished_at DESC
                     LIMIT %s
                     """,
-                    (market, limit),
+                    (market, market, limit),
                 )
             else:
                 cur.execute(
                     """
-                    SELECT id, market, as_of, max_stocks, n_stocks, client_ip,
+                    SELECT 'pipeline' AS kind, id, market, as_of, max_stocks,
+                           NULL::VARCHAR AS ticker, n_stocks, client_ip,
                            finished_at, (dashboard_png IS NOT NULL) AS has_png
                     FROM pipeline_runs
+                    UNION ALL
+                    SELECT 'single' AS kind, id, market, as_of, NULL::INTEGER AS max_stocks,
+                           ticker, NULL::INTEGER AS n_stocks, client_ip,
+                           finished_at, FALSE AS has_png
+                    FROM single_runs
                     ORDER BY finished_at DESC
                     LIMIT %s
                     """,
@@ -169,16 +197,75 @@ def list_runs(market: str | None = None, limit: int = 50) -> list[dict]:
                 )
             rows = cur.fetchall()
             return [{
-                "id": r[0], "market": r[1],
-                "as_of": r[2].isoformat() if r[2] else None,
-                "max_stocks": r[3], "n_stocks": r[4],
-                "client_ip": r[5],
-                "finished_at": r[6].isoformat() if r[6] else None,
-                "has_png": bool(r[7]),
+                "kind": r[0],
+                "id": r[1], "market": r[2],
+                "as_of": r[3].isoformat() if r[3] else None,
+                "max_stocks": r[4], "ticker": r[5], "n_stocks": r[6],
+                "client_ip": r[7],
+                "finished_at": r[8].isoformat() if r[8] else None,
+                "has_png": bool(r[9]),
             } for r in rows]
     except Exception as e:  # noqa: BLE001
         log.warning("db list_runs failed: %s", e)
         return []
+
+
+def save_single(ticker: str, market: str, as_of: str | None, result: dict,
+                client_ip: str | None,
+                started_at: datetime, finished_at: datetime) -> bool:
+    if not is_enabled():
+        return False
+    try:
+        with _pool.connection() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO single_runs
+                  (ticker, market, as_of, result, client_ip, started_at, finished_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (ticker, market, as_of)
+                DO UPDATE SET
+                  result      = EXCLUDED.result,
+                  client_ip   = EXCLUDED.client_ip,
+                  started_at  = EXCLUDED.started_at,
+                  finished_at = EXCLUDED.finished_at
+                """,
+                (ticker, market, _norm_date(as_of), Json(result),
+                 (client_ip or None), started_at, finished_at),
+            )
+            conn.commit()
+        return True
+    except Exception as e:  # noqa: BLE001
+        log.warning("db save_single failed: %s", e)
+        return False
+
+
+def get_single(run_id: int) -> dict | None:
+    if not is_enabled():
+        return None
+    try:
+        with _pool.connection() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, ticker, market, as_of, result, client_ip,
+                       started_at, finished_at
+                FROM single_runs WHERE id = %s
+                """,
+                (run_id,),
+            )
+            r = cur.fetchone()
+            if not r:
+                return None
+            return {
+                "id": r[0], "ticker": r[1], "market": r[2],
+                "as_of": r[3].isoformat() if r[3] else None,
+                "result": r[4],
+                "client_ip": r[5],
+                "started_at": r[6].isoformat() if r[6] else None,
+                "finished_at": r[7].isoformat() if r[7] else None,
+            }
+    except Exception as e:  # noqa: BLE001
+        log.warning("db get_single failed: %s", e)
+        return None
 
 
 def get_run(run_id: int, with_png: bool = True) -> dict | None:
