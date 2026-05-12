@@ -784,7 +784,8 @@ function renderHistoryTable(runs) {
     { k: 'finished_at', t: '완료 시각', fmt: fmtDt },
     { k: 'has_png', t: 'PNG', fmt: v => v ? '✓' : '—' },
   ];
-  let html = '<table><thead><tr>' + cols.map(c => `<th>${c.t}</th>`).join('') + '</tr></thead><tbody>';
+  let html = '<div style="overflow-x:auto;"><table style="min-width:760px;"><thead><tr>'
+           + cols.map(c => `<th>${c.t}</th>`).join('') + '</tr></thead><tbody>';
   for (const r of runs) {
     html += `<tr class="history-row" data-id="${r.id}" data-market="${r.market}">`;
     for (const c of cols) {
@@ -794,7 +795,7 @@ function renderHistoryTable(runs) {
     }
     html += '</tr>';
   }
-  html += '</tbody></table>';
+  html += '</tbody></table></div>';
   el.innerHTML = html;
   el.querySelectorAll('.history-row').forEach(tr => {
     tr.addEventListener('click', () => openHistoricRun(
